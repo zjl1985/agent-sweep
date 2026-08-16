@@ -8,6 +8,15 @@ import {
 import { deleteSessions, scanSessions } from "./api";
 import type { DeleteMode, ScanResult, SessionEntry } from "./types";
 import {
+  loadLocale,
+  localizeDirName,
+  localizeMessage,
+  localizeTitle,
+  saveLocale,
+  strings,
+  type Locale,
+} from "./i18n";
+import {
   ArchiveIcon,
   DatabaseIcon,
   FolderIcon,
@@ -22,12 +31,7 @@ type StatusFilter = "all" | "active" | "archived";
 type SortKey = "size" | "updated";
 type AgeFilter = 0 | 7 | 30 | 90;
 
-const AGE_OPTIONS: { value: AgeFilter; label: string }[] = [
-  { value: 0, label: "Any time" },
-  { value: 7, label: "Older than 7 days" },
-  { value: 30, label: "Older than 30 days" },
-  { value: 90, label: "Older than 90 days" },
-];
+const AGE_VALUES: AgeFilter[] = [0, 7, 30, 90];
 
 const MODE_STORAGE_KEY = "codex-clear:delete-mode";
 const DAY_MS = 86_400_000;
@@ -60,6 +64,7 @@ function loadDefaultMode(): DeleteMode {
 }
 
 export default function App() {
+  const [locale, setLocale] = useState<Locale>(() => loadLocale());
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -76,13 +81,24 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [defaultMode, setDefaultMode] = useState<DeleteMode>("trash");
 
+  const t = strings[locale];
+
   const searchRef = useRef<HTMLInputElement>(null);
   const confirmRef = useRef<HTMLDialogElement>(null);
   const settingsRef = useRef<HTMLDialogElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
+  }, [locale]);
+
+  useEffect(() => {
     setDefaultMode(loadDefaultMode());
+  }, []);
+
+  const switchLocale = useCallback((next: Locale) => {
+    setLocale(next);
+    saveLocale(next);
   }, []);
 
   const doScan = useCallback(async () => {
@@ -94,16 +110,17 @@ export default function App() {
       setSelected(new Set());
       setActiveIndex(0);
       setNotice(
-        `Scanned ${result.sessions.length} sessions, ${formatSize(
-          result.sessionsBytes,
-        )} total`,
+        strings[locale].scanNotice(
+          result.sessions.length,
+          formatSize(result.sessionsBytes),
+        ),
       );
     } catch (cause) {
       setError(String(cause));
     } finally {
       setScanning(false);
     }
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     void doScan();
@@ -204,12 +221,17 @@ export default function App() {
         sessionIds: [...selected],
         mode: dialogMode,
       });
-      const summary = `Deleted ${result.deletedCount} sessions, freed ${formatSize(
-        result.freedBytes,
-      )}`;
+      const summary = strings[locale].deletedNotice(
+        result.deletedCount,
+        formatSize(result.freedBytes),
+      );
       if (result.failed.length > 0) {
         setError(
-          `${summary}; ${result.failed.length} failed: ${result.failed[0].message}`,
+          summary +
+            strings[locale].deleteFailedSuffix(
+              result.failed.length,
+              localizeMessage(result.failed[0].message, locale),
+            ),
         );
       } else {
         setNotice(summary);
@@ -221,7 +243,7 @@ export default function App() {
     } finally {
       setDeleting(false);
     }
-  }, [selected, dialogMode, closeConfirm, doScan]);
+  }, [selected, dialogMode, closeConfirm, doScan, locale]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -289,34 +311,61 @@ export default function App() {
   const activeCount = scan?.activeCount ?? 0;
   const archivedCount = scan?.archivedCount ?? 0;
 
+  const ageLabel = (value: AgeFilter): string =>
+    value === 0
+      ? t.ageAny
+      : value === 7
+        ? t.age7
+        : value === 30
+          ? t.age30
+          : t.age90;
+
   return (
     <div class="app-shell">
       <header class="app-header">
         <div class="brand">
           <h1 class="brand-title">CodexClear</h1>
-          <p class="brand-sub">Inspect and clean local Codex session storage</p>
+          <p class="brand-sub">{t.brandSubtitle}</p>
         </div>
         <div class="header-actions">
+          <div class="locale-switch" role="group" aria-label="Language / 语言">
+            <button
+              class={`chip ${locale === "en" ? "chip-active" : ""}`}
+              onClick={() => switchLocale("en")}
+              aria-pressed={locale === "en"}
+              title="English"
+            >
+              EN
+            </button>
+            <button
+              class={`chip ${locale === "zh" ? "chip-active" : ""}`}
+              onClick={() => switchLocale("zh")}
+              aria-pressed={locale === "zh"}
+              title="中文"
+            >
+              中
+            </button>
+          </div>
           <button
             class="ghost-button"
             onClick={openSettings}
-            title="Settings (⌘,)"
+            title={t.settingsAria}
           >
-            <SettingsIcon /> Settings
+            <SettingsIcon /> {t.settings}
           </button>
           <button
             class="ghost-button"
             onClick={() => void doScan()}
             disabled={scanning}
           >
-            <RefreshIcon /> {scanning ? "Scanning…" : "Rescan"}
+            <RefreshIcon /> {scanning ? t.scanning : t.rescan}
           </button>
         </div>
       </header>
 
       {error && (
         <div class="banner banner-error" role="alert">
-          {error}
+          {localizeMessage(error, locale)}
           <button class="banner-close" onClick={() => setError(null)}>
             ✕
           </button>
@@ -324,67 +373,70 @@ export default function App() {
       )}
       {scan && scan.issues.length > 0 && (
         <div class="banner banner-warning">
-          {scan.issues.join("; ")}
+          {scan.issues
+            .map((issue) => localizeMessage(issue, locale))
+            .join(locale === "zh" ? "；" : "; ")}
         </div>
       )}
 
-      <section class="stats-row" aria-label="Session storage stats">
+      <section class="stats-row" aria-label={t.statsLabel}>
         <div class="stat stat-primary">
           <span class="stat-value">{formatSize(scan?.sessionsBytes ?? 0)}</span>
           <span class="stat-label">
-            Total session size ({scan?.sessions.length ?? 0})
+            {t.totalSize(scan?.sessions.length ?? 0)}
           </span>
         </div>
         <div class="stat">
           <span class="stat-value">{activeCount}</span>
           <span class="stat-label">
-            Active · {formatSize(scan?.activeBytes ?? 0)}
+            {t.activeLabel(formatSize(scan?.activeBytes ?? 0))}
           </span>
         </div>
         <div class="stat">
           <span class="stat-value">{archivedCount}</span>
           <span class="stat-label">
-            Archived · {formatSize(scan?.archivedBytes ?? 0)}
+            {t.archivedLabel(formatSize(scan?.archivedBytes ?? 0))}
           </span>
         </div>
         <div class="stat">
           <span class="stat-value">{formatSize(scan?.codexTotalBytes ?? 0)}</span>
-          <span class="stat-label">~/.codex total</span>
+          <span class="stat-label">{t.codexTotal}</span>
         </div>
       </section>
 
       {scan && scan.otherDirs.length > 0 && (
-        <section class="overview-row" aria-label="Other disk usage (read-only)">
+        <section class="overview-row" aria-label={t.otherUsageLabel}>
           <DatabaseIcon size={14} />
-          <span class="overview-title">Other usage</span>
+          <span class="overview-title">{t.otherUsage}</span>
           <div class="overview-chips">
             {scan.otherDirs.map((dir) => (
               <span class="overview-chip" title={dir.note}>
-                {dir.name} {formatSize(dir.sizeBytes)}
+                {localizeDirName(dir.name, locale)}{" "}
+                {formatSize(dir.sizeBytes)}
               </span>
             ))}
           </div>
         </section>
       )}
 
-      <section class="toolbar" aria-label="Filters and sorting">
+      <section class="toolbar" aria-label={t.toolbarLabel}>
         <div class="search-box">
           <SearchIcon size={14} />
           <input
             ref={searchRef}
             type="search"
-            placeholder="Search title, directory, or session id (⌘K)"
+            placeholder={t.searchPlaceholder}
             value={query}
             onInput={(event) => setQuery(event.currentTarget.value)}
-            aria-label="Search sessions"
+            aria-label={t.searchLabel}
           />
         </div>
-        <div class="chip-group" role="group" aria-label="Status filter">
+        <div class="chip-group" role="group" aria-label={t.statusFilterLabel}>
           {(
             [
-              ["all", `All ${scan?.sessions.length ?? 0}`],
-              ["active", `Active ${activeCount}`],
-              ["archived", `Archived ${archivedCount}`],
+              ["all", t.chipAll(scan?.sessions.length ?? 0)],
+              ["active", t.chipActive(activeCount)],
+              ["archived", t.chipArchived(archivedCount)],
             ] as [StatusFilter, string][]
           ).map(([value, label]) => (
             <button
@@ -402,20 +454,20 @@ export default function App() {
           onChange={(event) =>
             setAgeFilter(Number(event.currentTarget.value) as AgeFilter)
           }
-          aria-label="Age filter"
+          aria-label={t.ageFilterLabel}
         >
-          {AGE_OPTIONS.map((option) => (
-            <option value={option.value}>{option.label}</option>
+          {AGE_VALUES.map((value) => (
+            <option value={value}>{ageLabel(value)}</option>
           ))}
         </select>
         <select
           class="select"
           value={sortBy}
           onChange={(event) => setSortBy(event.currentTarget.value as SortKey)}
-          aria-label="Sort order"
+          aria-label={t.sortLabel}
         >
-          <option value="size">By size ↓</option>
-          <option value="updated">By updated ↓</option>
+          <option value="size">{t.sortSize}</option>
+          <option value="updated">{t.sortUpdated}</option>
         </select>
         <div class="toolbar-spacer" />
         <button
@@ -423,23 +475,21 @@ export default function App() {
           onClick={selectAllVisible}
           disabled={sortedSessions.length === 0}
         >
-          Select all filtered ({sortedSessions.length})
+          {t.selectAll(sortedSessions.length)}
         </button>
       </section>
 
       <div
         class="session-list"
         role="listbox"
-        aria-label="Session list"
+        aria-label={t.listLabel}
         aria-multiselectable="true"
         ref={listRef}
         tabIndex={0}
       >
         {sortedSessions.length === 0 && (
           <div class="empty-state">
-            {scanning
-              ? "Scanning ~/.codex/sessions…"
-              : "No sessions match the current filters. Adjust the filters or rescan."}
+            {scanning ? t.emptyScanning : t.emptyNoMatch}
           </div>
         )}
         {sortedSessions.map((session, index) => (
@@ -450,6 +500,7 @@ export default function App() {
             active={index === activeIndex}
             checked={selected.has(session.sessionId)}
             maxBytes={maxBytes}
+            locale={locale}
             onToggle={() => toggleSelected(session.sessionId)}
           />
         ))}
@@ -459,24 +510,23 @@ export default function App() {
         <span
           class={`selection-hint ${selected.size > 0 ? "cluster-hidden" : ""}`}
         >
-          Click a row to select it; use arrow keys to navigate, space or enter
-          to toggle
+          {t.hint}
         </span>
         <div
           class={`selection-cluster ${selected.size > 0 ? "" : "cluster-hidden"}`}
         >
           <span class="selection-summary">
-            {selected.size} selected · {formatSize(selectedBytes)}
+            {t.selectedSummary(selected.size, formatSize(selectedBytes))}
           </span>
           <button class="ghost-button" onClick={clearSelection}>
-            Clear selection
+            {t.clearSelection}
           </button>
           <button
             class="danger-button"
             onClick={openConfirm}
             disabled={deleting}
           >
-            <TrashIcon /> Delete…
+            <TrashIcon /> {t.deleteSelected}
           </button>
         </div>
       </footer>
@@ -490,13 +540,12 @@ export default function App() {
         class="dialog"
         onClose={() => setConfirmOpen(false)}
       >
-        <h2>Delete sessions</h2>
+        <h2>{t.confirmTitle}</h2>
         <p>
-          About to process <strong>{selected.size}</strong> sessions totaling{" "}
-          <strong>{formatSize(selectedBytes)}</strong>.
+          {t.confirmBody(selected.size, formatSize(selectedBytes))}
         </p>
         <fieldset class="mode-fieldset">
-          <legend>Mode</legend>
+          <legend>{t.mode}</legend>
           <label>
             <input
               type="radio"
@@ -504,7 +553,7 @@ export default function App() {
               checked={dialogMode === "trash"}
               onChange={() => setDialogMode("trash")}
             />
-            Move to Trash (recoverable from Finder)
+            {t.trashOption}
           </label>
           <label>
             <input
@@ -513,12 +562,12 @@ export default function App() {
               checked={dialogMode === "permanent"}
               onChange={() => setDialogMode("permanent")}
             />
-            Delete permanently (irrecoverable)
+            {t.permanentOption}
           </label>
         </fieldset>
         <div class="dialog-actions">
           <button class="ghost-button" onClick={closeConfirm}>
-            Cancel
+            {t.cancel}
           </button>
           <button
             class={dialogMode === "permanent" ? "danger-button" : "primary-button"}
@@ -526,10 +575,10 @@ export default function App() {
             disabled={deleting}
           >
             {deleting
-              ? "Working…"
+              ? t.working
               : dialogMode === "permanent"
-                ? "Delete permanently"
-                : "Move to Trash"}
+                ? t.deletePermanently
+                : t.moveTrash}
           </button>
         </div>
       </dialog>
@@ -539,9 +588,9 @@ export default function App() {
         class="dialog"
         onClose={() => setSettingsOpen(false)}
       >
-        <h2>Settings</h2>
+        <h2>{t.settingsTitle}</h2>
         <fieldset class="mode-fieldset">
-          <legend>Default mode</legend>
+          <legend>{t.defaultMode}</legend>
           <label>
             <input
               type="radio"
@@ -549,7 +598,7 @@ export default function App() {
               checked={defaultMode === "trash"}
               onChange={() => saveDefaultMode("trash")}
             />
-            Move to Trash (recommended)
+            {t.trashRecommended}
           </label>
           <label>
             <input
@@ -558,16 +607,13 @@ export default function App() {
               checked={defaultMode === "permanent"}
               onChange={() => saveDefaultMode("permanent")}
             />
-            Delete permanently
+            {t.permanent}
           </label>
         </fieldset>
-        <p class="settings-note">
-          You can still switch modes in the confirmation dialog before each
-          delete. Stored locally.
-        </p>
+        <p class="settings-note">{t.settingsNote}</p>
         <div class="dialog-actions">
           <button class="primary-button" onClick={closeSettings}>
-            Done
+            {t.done}
           </button>
         </div>
       </dialog>
@@ -581,6 +627,7 @@ interface SessionRowProps {
   active: boolean;
   checked: boolean;
   maxBytes: number;
+  locale: Locale;
   onToggle: () => void;
 }
 
@@ -590,12 +637,14 @@ function SessionRow({
   active,
   checked,
   maxBytes,
+  locale,
   onToggle,
 }: SessionRowProps) {
   const barPercent = Math.max(
     2,
     Math.round((session.sizeBytes / maxBytes) * 100),
   );
+  const title = localizeTitle(session.title, locale);
   return (
     <div
       class={`session-row ${active ? "row-active" : ""} ${
@@ -611,17 +660,17 @@ function SessionRow({
         checked={checked}
         onClick={(event) => event.stopPropagation()}
         onInput={onToggle}
-        aria-label={`Select ${session.title}`}
+        aria-label={strings[locale].selectRow(title)}
         tabIndex={-1}
       />
       <div class="row-main">
         <div class="row-title-line">
-          <span class="row-title" title={session.title}>
-            {session.title}
+          <span class="row-title" title={title}>
+            {title}
           </span>
           {session.archived && (
             <span class="badge badge-archived">
-              <ArchiveIcon size={11} /> Archived
+              <ArchiveIcon size={11} /> {strings[locale].badgeArchived}
             </span>
           )}
         </div>

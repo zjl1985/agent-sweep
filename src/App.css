@@ -124,6 +124,24 @@ button:disabled {
 .header-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+/* ---------- Language switch ---------- */
+
+.locale-switch {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.locale-switch .chip {
+  padding: 3px 9px;
+  font-size: 12px;
+  border-radius: 6px;
 }
 
 /* ---------- Buttons ---------- */

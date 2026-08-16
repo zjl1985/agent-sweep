@@ -4,6 +4,7 @@ A local-first desktop app for inspecting and cleaning [OpenAI Codex CLI](https:/
 
 ## Features
 
+- **Bilingual UI** — English by default with an in-app toggle for Chinese; the choice is remembered locally
 - **Storage stats** — total size of all Codex sessions, split by active vs. archived, plus the overall `~/.codex` footprint
 - **Per-session sizes, sorted** — every `rollout-*.jsonl` under `sessions/YYYY/MM/DD/` and `archived_sessions/`, sorted by size (or updated time), with a relative size bar, title, working directory, and timestamps
 - **Filters** — keyword search (title / directory / session id), active/archived, older-than-7/30/90-days, and "select all filtered" for bulk operations
