@@ -1,12 +1,32 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#6d7ce4"/>
-      <stop offset="1" stop-color="#4656b5"/>
+      <stop offset="0" stop-color="#2e2e30"/>
+      <stop offset="1" stop-color="#1b1b1d"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#4aa3ff"/>
+      <stop offset="1" stop-color="#0a84ff"/>
     </linearGradient>
   </defs>
-  <rect width="1024" height="1024" fill="url(#bg)"/>
-  <rect x="232" y="292" width="560" height="100" rx="50" fill="#ffffff" fill-opacity="0.95"/>
-  <rect x="232" y="462" width="430" height="100" rx="50" fill="#ffffff" fill-opacity="0.62"/>
-  <rect x="232" y="632" width="310" height="100" rx="50" fill="#ffffff" fill-opacity="0.36"/>
+
+  <!-- macOS squircle, full bleed -->
+  <rect width="1024" height="1024" rx="229" fill="url(#bg)"/>
+
+  <!-- Conversation lines being swept away: shorter and fainter -->
+  <rect x="232" y="302" width="560" height="100" rx="50" fill="#ffffff" fill-opacity="0.95"/>
+  <rect x="232" y="482" width="410" height="100" rx="50" fill="#ffffff" fill-opacity="0.58"/>
+  <rect x="232" y="662" width="260" height="100" rx="50" fill="#ffffff" fill-opacity="0.28"/>
+
+  <!-- The clean sparkle -->
+  <path fill="url(#spark)" d="M700 540
+    Q716 614 790 630
+    Q716 646 700 720
+    Q684 646 610 630
+    Q684 614 700 540 Z"/>
+  <path fill="url(#spark)" fill-opacity="0.85" d="M838 422
+    Q848 470 896 480
+    Q848 490 838 538
+    Q828 490 780 480
+    Q828 470 838 422 Z"/>
 </svg>

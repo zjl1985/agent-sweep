@@ -5,6 +5,8 @@ export interface Strings {
   settings: string;
   settingsTitle: string;
   settingsAria: string;
+  toDarkMode: string;
+  toLightMode: string;
   rescan: string;
   scanning: string;
   statsLabel: string;
@@ -37,7 +39,7 @@ export interface Strings {
   selectRow: (title: string) => string;
   hint: string;
   selectedSummary: (count: number, size: string) => string;
-  clearSelection: string;
+  clearSelected: (count: number) => string;
   deleteSelected: string;
   confirmTitle: string;
   confirmBody: (count: number, size: string) => string;
@@ -63,6 +65,8 @@ const en: Strings = {
   settings: "Settings",
   settingsTitle: "Settings",
   settingsAria: "Settings (⌘,)",
+  toDarkMode: "Switch to dark mode",
+  toLightMode: "Switch to light mode",
   rescan: "Rescan",
   scanning: "Scanning…",
   statsLabel: "Session storage stats",
@@ -87,7 +91,7 @@ const en: Strings = {
   sortUpdated: "By updated ↓",
   sortLabel: "Sort order",
   toolbarLabel: "Filters and sorting",
-  selectAll: (count) => `Select all filtered (${count})`,
+  selectAll: (count) => `Select all (${count})`,
   listLabel: "Session list",
   emptyScanning: "Scanning ~/.codex/sessions…",
   emptyNoMatch:
@@ -96,7 +100,7 @@ const en: Strings = {
   selectRow: (title) => `Select ${title}`,
   hint: "Click a row to select it; use arrow keys to navigate, space or enter to toggle",
   selectedSummary: (count, size) => `${count} selected · ${size}`,
-  clearSelection: "Clear selection",
+  clearSelected: (count) => `Clear (${count})`,
   deleteSelected: "Delete…",
   confirmTitle: "Delete sessions",
   confirmBody: (count, size) =>
@@ -124,6 +128,8 @@ const zh: Strings = {
   settings: "设置",
   settingsTitle: "设置",
   settingsAria: "设置 (⌘,)",
+  toDarkMode: "切换到深色模式",
+  toLightMode: "切换到浅色模式",
   rescan: "重新扫描",
   scanning: "扫描中…",
   statsLabel: "会话占用统计",
@@ -148,7 +154,7 @@ const zh: Strings = {
   sortUpdated: "按更新时间 ↓",
   sortLabel: "排序方式",
   toolbarLabel: "筛选与排序",
-  selectAll: (count) => `全选筛选结果（${count}）`,
+  selectAll: (count) => `全选（${count}）`,
   listLabel: "会话列表",
   emptyScanning: "正在扫描 ~/.codex/sessions …",
   emptyNoMatch: "没有符合条件的会话。调整筛选条件或重新扫描。",
@@ -156,7 +162,7 @@ const zh: Strings = {
   selectRow: (title) => `选择 ${title}`,
   hint: "点击行勾选会话；方向键导航，空格或回车切换勾选",
   selectedSummary: (count, size) => `已选 ${count} 个 · 共 ${size}`,
-  clearSelection: "清除选择",
+  clearSelected: (count) => `清除（${count}）`,
   deleteSelected: "删除…",
   confirmTitle: "删除会话",
   confirmBody: (count, size) => `即将处理 ${count} 个会话，共 ${size}。`,
@@ -202,10 +208,7 @@ const zhMessagePrefixes: [string, string][] = [
     "No sessions/ or archived_sessions/ directory found",
     "未找到 sessions/ 或 archived_sessions/ 目录",
   ],
-  [
-    "No rollout file found for this session id",
-    "未找到对应的会话文件",
-  ],
+  ["Invalid session path", "无效的会话路径"],
   [
     "Only rollout-*.jsonl session files can be deleted",
     "仅允许删除 rollout-*.jsonl 会话文件",

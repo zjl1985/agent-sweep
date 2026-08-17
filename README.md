@@ -5,6 +5,7 @@ A local-first desktop app for inspecting and cleaning [OpenAI Codex CLI](https:/
 ## Features
 
 - **Bilingual UI** — English by default with an in-app toggle for Chinese; the choice is remembered locally
+- **Light & dark themes** — follows the system appearance until you pick one with the header toggle; the choice is remembered locally
 - **Storage stats** — total size of all Codex sessions, split by active vs. archived, plus the overall `~/.codex` footprint
 - **Per-session sizes, sorted** — every `rollout-*.jsonl` under `sessions/YYYY/MM/DD/` and `archived_sessions/`, sorted by size (or updated time), with a relative size bar, title, working directory, and timestamps
 - **Filters** — keyword search (title / directory / session id), active/archived, older-than-7/30/90-days, and "select all filtered" for bulk operations
@@ -14,7 +15,7 @@ A local-first desktop app for inspecting and cleaning [OpenAI Codex CLI](https:/
 ## Safety design
 
 - The scanner only stats files and reads a bounded number of leading lines (512 KB per line cap) to extract `session_meta`; file bodies are never loaded
-- The frontend only exchanges session ids — paths are resolved inside the session roots by the backend and never leave the Rust side
+- The frontend only exchanges paths relative to `~/.codex` (e.g. `sessions/2026/08/15/rollout-….jsonl`) — a session id is not unique per file, so selection and deletion key off the relative path; absolute paths never leave the Rust side
 - Every deletion is validated: the file name must match `rollout-*.jsonl`, the target must be a regular file (symbolic links are rejected), and the canonicalized path must stay inside `sessions/` or `archived_sessions/`
 - After deletion, empty `YYYY/MM/DD` directories are pruned bottom-up; the roots themselves are never removed
 - Deleting only removes rollout files; Codex index files (`session_index.jsonl`, `history.jsonl`) are left untouched
@@ -37,19 +38,19 @@ codex_clear/
 
 ## Development
 
-Prerequisites: [Rust](https://rustup.rs/) and Node.js.
+Prerequisites: [Rust](https://rustup.rs/), Node.js, and [pnpm](https://pnpm.io/).
 
 ```sh
-npm install
-npm run tauri dev      # run the desktop app in dev mode
+pnpm install
+pnpm tauri dev      # run the desktop app in dev mode
 ```
 
 Note: `tauri dev` runs an unbundled binary on macOS, so the Dock shows a generic icon during development. The app icon appears in the bundled `.app` produced by a release build.
 
 ```sh
-npm run check                    # TypeScript type check
+pnpm check                    # TypeScript type check
 cargo test --manifest-path src-tauri/Cargo.toml   # Rust unit tests
-npm run tauri build -- --bundles app   # build the release .app
+pnpm tauri build --bundles app   # build the release .app
 ```
 
 A manual diagnostic test runs the scanner against your real `~/.codex`:
@@ -66,4 +67,4 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib scan_real -- --ignored --n
 
 ## License
 
-Private project — not distributed yet.
+[MIT](LICENSE)

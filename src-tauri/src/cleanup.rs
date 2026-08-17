@@ -1,10 +1,7 @@
-use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
-use walkdir::WalkDir;
-
-use crate::discovery::{codex_home, session_id_from_file_name};
+use crate::discovery::codex_home;
 use crate::models::{DeleteFailure, DeleteMode, DeleteRequest, DeleteResult};
 
 pub fn delete(request: DeleteRequest) -> DeleteResult {
@@ -14,16 +11,16 @@ pub fn delete(request: DeleteRequest) -> DeleteResult {
             deleted_count: 0,
             freed_bytes: 0,
             failed: vec![DeleteFailure {
-                session_id: String::new(),
+                path: String::new(),
                 message: "Could not locate the user home directory".to_string(),
             }],
         },
     }
 }
 
-/// The frontend only sends session ids; the backend re-resolves them to files
-/// inside the session roots and validates before deleting — paths never leave
-/// the Rust side (same locator idea as baton).
+/// The frontend only sends paths relative to the Codex home (as reported by
+/// the scan); the backend validates each one before deleting — absolute paths
+/// never leave the Rust side (same locator idea as baton).
 pub fn delete_at(request: DeleteRequest, codex_root: &Path) -> DeleteResult {
     let mut result = DeleteResult {
         deleted_count: 0,
@@ -38,28 +35,20 @@ pub fn delete_at(request: DeleteRequest, codex_root: &Path) -> DeleteResult {
         .collect();
     if allowed_roots.is_empty() {
         result.failed.push(DeleteFailure {
-            session_id: String::new(),
+            path: String::new(),
             message: "No sessions/ or archived_sessions/ directory found".to_string(),
         });
         return result;
     }
 
-    let wanted: HashSet<String> = request.session_ids.iter().cloned().collect();
-    let targets = resolve_targets(&sessions_root, &archived_root, &wanted);
-
-    for session_id in &request.session_ids {
-        let path = match targets.get(session_id) {
-            Some(path) => path,
-            None => {
-                result.failed.push(DeleteFailure {
-                    session_id: session_id.clone(),
-                    message: "No rollout file found for this session id".to_string(),
-                });
-                continue;
-            }
-        };
-        match validate_session_file(path, &allowed_roots) {
-            Ok(size) => match remove(path, request.mode) {
+    for rel in &request.paths {
+        let validated = resolve_rel_path(rel)
+            .map(|rel_path| codex_root.join(rel_path))
+            .and_then(|path| {
+                validate_session_file(&path, &allowed_roots).map(|size| (path, size))
+            });
+        match validated {
+            Ok((path, size)) => match remove(&path, request.mode) {
                 Ok(()) => {
                     result.deleted_count += 1;
                     result.freed_bytes += size;
@@ -68,12 +57,12 @@ pub fn delete_at(request: DeleteRequest, codex_root: &Path) -> DeleteResult {
                     }
                 }
                 Err(error) => result.failed.push(DeleteFailure {
-                    session_id: session_id.clone(),
+                    path: rel.clone(),
                     message: error.to_string(),
                 }),
             },
             Err(message) => result.failed.push(DeleteFailure {
-                session_id: session_id.clone(),
+                path: rel.clone(),
                 message,
             }),
         }
@@ -81,44 +70,24 @@ pub fn delete_at(request: DeleteRequest, codex_root: &Path) -> DeleteResult {
     result
 }
 
-/// Walks the tree and derives ids from file names only; no file contents are
-/// read, so resolution is fast.
-fn resolve_targets(
-    sessions_root: &Path,
-    archived_root: &Path,
-    wanted: &HashSet<String>,
-) -> HashMap<String, PathBuf> {
-    let mut targets = HashMap::new();
-    for (root, depth) in [(sessions_root, 4usize), (archived_root, 1usize)] {
-        if !root.is_dir() {
-            continue;
-        }
-        for entry in WalkDir::new(root)
-            .max_depth(depth)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(|entry| entry.ok())
-        {
-            // Symbolic links are included in resolution so the validation
-            // layer rejects them with an explicit reason instead of a vague
-            // "not found".
-            if !(entry.file_type().is_file() || entry.file_type().is_symlink()) {
-                continue;
-            }
-            let name = match entry.path().file_name().and_then(|name| name.to_str()) {
-                Some(name) => name,
-                None => continue,
-            };
-            if let Some(id) = session_id_from_file_name(name) {
-                if wanted.contains(&id) {
-                    targets
-                        .entry(id)
-                        .or_insert_with(|| entry.path().to_path_buf());
-                }
-            }
-        }
+/// Turns a scan-reported relative path back into a path safe to join onto the
+/// Codex home: no absolute paths, no `.`/`..` components, and it must stay
+/// under sessions/ or archived_sessions/.
+fn resolve_rel_path(rel: &str) -> Result<&Path, String> {
+    let path = Path::new(rel);
+    if rel.is_empty() || path.is_absolute() {
+        return Err("Invalid session path".to_string());
     }
-    targets
+    if !path
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err("Invalid session path".to_string());
+    }
+    if !(rel.starts_with("sessions/") || rel.starts_with("archived_sessions/")) {
+        return Err("Path is outside the Codex session directories".to_string());
+    }
+    Ok(path)
 }
 
 /// Pre-delete validation: only regular rollout-*.jsonl files directly under
@@ -207,7 +176,9 @@ mod tests {
 
         let result = delete_at(
             DeleteRequest {
-                session_ids: vec!["01a00000-0000-0000-0000-000000000001".to_string()],
+                paths: vec![active(
+                    "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-000000000001.jsonl",
+                )],
                 mode: DeleteMode::Permanent,
             },
             root,
@@ -239,9 +210,9 @@ mod tests {
 
         let result = delete_at(
             DeleteRequest {
-                session_ids: vec![
-                    "01a00000-0000-0000-0000-00000000000a".to_string(),
-                    "01a00000-0000-0000-0000-00000000000b".to_string(),
+                paths: vec![
+                    active("rollout-2026-01-01T00-00-00-01a00000-0000-0000-0000-00000000000a.jsonl"),
+                    "archived_sessions/rollout-2026-01-02T00-00-00-01a00000-0000-0000-0000-00000000000b.jsonl".to_string(),
                 ],
                 mode: DeleteMode::Permanent,
             },
@@ -258,14 +229,16 @@ mod tests {
     }
 
     #[test]
-    fn delete_reports_unknown_session_ids() {
+    fn delete_reports_missing_files() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         fs::create_dir_all(root.join("sessions")).unwrap();
 
         let result = delete_at(
             DeleteRequest {
-                session_ids: vec!["01a00000-0000-0000-0000-000000deadbeef".to_string()],
+                paths: vec![active(
+                    "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-0000000dead0.jsonl",
+                )],
                 mode: DeleteMode::Permanent,
             },
             root,
@@ -273,25 +246,24 @@ mod tests {
 
         assert_eq!(result.deleted_count, 0);
         assert_eq!(result.failed.len(), 1);
-        assert!(result.failed[0].message.contains("No rollout file found"));
+        assert!(result.failed[0].message.contains("File not found"));
     }
 
     #[test]
-    fn delete_ignores_files_that_are_not_rollout_sessions() {
+    fn delete_rejects_paths_outside_the_session_roots() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        // Same prefix but not valid session files; their ids never resolve,
-        // so nothing is deleted.
-        let notes = root.join(active("notes.txt"));
-        let stray = root.join(active("rollout-short.jsonl"));
-        write_rollout(&notes, "important");
-        write_rollout(&stray, "stray");
+        fs::create_dir_all(root.join("sessions")).unwrap();
+        let outside = root.join("plugins/rollout-x.jsonl");
+        write_rollout(&outside, "do not touch");
 
         let result = delete_at(
             DeleteRequest {
-                session_ids: vec![
-                    "notes.txt".to_string(),
-                    "short".to_string(),
+                paths: vec![
+                    "sessions/../../plugins/rollout-x.jsonl".to_string(),
+                    "archived_sessions/../plugins/rollout-x.jsonl".to_string(),
+                    "/etc/passwd".to_string(),
+                    "plugins/rollout-x.jsonl".to_string(),
                 ],
                 mode: DeleteMode::Permanent,
             },
@@ -299,9 +271,31 @@ mod tests {
         );
 
         assert_eq!(result.deleted_count, 0);
-        assert_eq!(result.failed.len(), 2);
+        assert_eq!(result.failed.len(), 4);
+        assert!(outside.exists());
+    }
+
+    #[test]
+    fn delete_rejects_non_rollout_file_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let notes = root.join(active("notes.txt"));
+        write_rollout(&notes, "important");
+
+        let result = delete_at(
+            DeleteRequest {
+                paths: vec![active("notes.txt")],
+                mode: DeleteMode::Permanent,
+            },
+            root,
+        );
+
+        assert_eq!(result.deleted_count, 0);
+        assert_eq!(result.failed.len(), 1);
+        assert!(result.failed[0]
+            .message
+            .contains("Only rollout-*.jsonl session files can be deleted"));
         assert!(notes.exists());
-        assert!(stray.exists());
     }
 
     #[test]
@@ -318,7 +312,9 @@ mod tests {
 
         let result = delete_at(
             DeleteRequest {
-                session_ids: vec!["01a00000-0000-0000-0000-00000000000d".to_string()],
+                paths: vec![active(
+                    "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-00000000000d.jsonl",
+                )],
                 mode: DeleteMode::Permanent,
             },
             root,
@@ -338,12 +334,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let result = delete_at(
             DeleteRequest {
-                session_ids: vec!["01a00000-0000-0000-0000-00000000000c".to_string()],
+                paths: vec![active(
+                    "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-00000000000c.jsonl",
+                )],
                 mode: DeleteMode::Permanent,
             },
             dir.path(),
         );
         assert_eq!(result.deleted_count, 0);
-        assert!(result.failed[0].message.contains("No sessions/ or archived_sessions"));
+        assert!(result.failed[0]
+            .message
+            .contains("No sessions/ or archived_sessions"));
     }
 }

@@ -11,6 +11,10 @@ pub struct SessionEntry {
     pub size_bytes: u64,
     pub archived: bool,
     pub file_name: String,
+    /// Path relative to the Codex home (e.g. `sessions/2026/08/15/rollout-….jsonl`).
+    /// Unique per file, unlike `session_id` — resumed sessions share one id
+    /// across several rollout files.
+    pub rel_path: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -64,14 +68,15 @@ pub enum DeleteMode {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteRequest {
-    pub session_ids: Vec<String>,
+    /// Paths relative to the Codex home, as reported by the scan.
+    pub paths: Vec<String>,
     pub mode: DeleteMode,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteFailure {
-    pub session_id: String,
+    pub path: String,
     pub message: String,
 }
 

@@ -7,6 +7,8 @@ export interface SessionEntry {
   sizeBytes: number;
   archived: boolean;
   fileName: string;
+  /** Path relative to the Codex home; unique per file (session ids are not). */
+  relPath: string;
 }
 
 export interface DirUsage {
@@ -31,12 +33,12 @@ export interface ScanResult {
 export type DeleteMode = "trash" | "permanent";
 
 export interface DeleteRequest {
-  sessionIds: string[];
+  paths: string[];
   mode: DeleteMode;
 }
 
 export interface DeleteFailure {
-  sessionId: string;
+  path: string;
   message: string;
 }
 

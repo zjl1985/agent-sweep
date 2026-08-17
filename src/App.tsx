@@ -20,9 +20,11 @@ import {
   ArchiveIcon,
   DatabaseIcon,
   FolderIcon,
+  MoonIcon,
   RefreshIcon,
   SearchIcon,
   SettingsIcon,
+  SunIcon,
   TrashIcon,
 } from "./components/Icons";
 import "./App.css";
@@ -30,10 +32,12 @@ import "./App.css";
 type StatusFilter = "all" | "active" | "archived";
 type SortKey = "size" | "updated";
 type AgeFilter = 0 | 7 | 30 | 90;
+type Theme = "light" | "dark";
 
 const AGE_VALUES: AgeFilter[] = [0, 7, 30, 90];
 
 const MODE_STORAGE_KEY = "codex-clear:delete-mode";
+const THEME_STORAGE_KEY = "codex-clear:theme";
 const DAY_MS = 86_400_000;
 
 function formatSize(bytes: number): string {
@@ -63,6 +67,14 @@ function loadDefaultMode(): DeleteMode {
     : "trash";
 }
 
+function loadTheme(): Theme {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === "light" || stored === "dark") return stored;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
 export default function App() {
   const [locale, setLocale] = useState<Locale>(() => loadLocale());
   const [scan, setScan] = useState<ScanResult | null>(null);
@@ -80,6 +92,7 @@ export default function App() {
   const [dialogMode, setDialogMode] = useState<DeleteMode>("trash");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [defaultMode, setDefaultMode] = useState<DeleteMode>("trash");
+  const [theme, setTheme] = useState<Theme>(() => loadTheme());
 
   const t = strings[locale];
 
@@ -91,6 +104,30 @@ export default function App() {
   useEffect(() => {
     document.documentElement.lang = locale === "zh" ? "zh-CN" : "en";
   }, [locale]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+
+  // Follow the OS appearance until the user picks a theme explicitly.
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => {
+      if (localStorage.getItem(THEME_STORAGE_KEY) === null) {
+        setTheme(media.matches ? "dark" : "light");
+      }
+    };
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((current) => {
+      const next = current === "dark" ? "light" : "dark";
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     setDefaultMode(loadDefaultMode());
@@ -162,7 +199,7 @@ export default function App() {
   );
 
   const selectedSessions = useMemo(
-    () => (scan?.sessions ?? []).filter((s) => selected.has(s.sessionId)),
+    () => (scan?.sessions ?? []).filter((s) => selected.has(s.relPath)),
     [scan, selected],
   );
   const selectedBytes = selectedSessions.reduce(
@@ -170,20 +207,24 @@ export default function App() {
     0,
   );
 
-  const toggleSelected = useCallback((sessionId: string) => {
+  const allFilteredSelected =
+    sortedSessions.length > 0 &&
+    sortedSessions.every((session) => selected.has(session.relPath));
+
+  const toggleSelected = useCallback((relPath: string) => {
     setSelected((current) => {
       const next = new Set(current);
-      if (next.has(sessionId)) {
-        next.delete(sessionId);
+      if (next.has(relPath)) {
+        next.delete(relPath);
       } else {
-        next.add(sessionId);
+        next.add(relPath);
       }
       return next;
     });
   }, []);
 
   const selectAllVisible = useCallback(() => {
-    setSelected(new Set(sortedSessions.map((session) => session.sessionId)));
+    setSelected(new Set(sortedSessions.map((session) => session.relPath)));
   }, [sortedSessions]);
 
   const clearSelection = useCallback(() => setSelected(new Set()), []);
@@ -218,7 +259,7 @@ export default function App() {
     setDeleting(true);
     try {
       const result = await deleteSessions({
-        sessionIds: [...selected],
+        paths: [...selected],
         mode: dialogMode,
       });
       const summary = strings[locale].deletedNotice(
@@ -286,7 +327,7 @@ export default function App() {
         const session = sortedSessions[activeIndex];
         if (session) {
           event.preventDefault();
-          toggleSelected(session.sessionId);
+          toggleSelected(session.relPath);
         }
       }
     };
@@ -328,6 +369,14 @@ export default function App() {
           <p class="brand-sub">{t.brandSubtitle}</p>
         </div>
         <div class="header-actions">
+          <button
+            class="icon-button"
+            onClick={toggleTheme}
+            title={theme === "dark" ? t.toLightMode : t.toDarkMode}
+            aria-label={theme === "dark" ? t.toLightMode : t.toDarkMode}
+          >
+            {theme === "dark" ? <SunIcon size={15} /> : <MoonIcon size={15} />}
+          </button>
           <div class="locale-switch" role="group" aria-label="Language / 语言">
             <button
               class={`chip ${locale === "en" ? "chip-active" : ""}`}
@@ -347,18 +396,21 @@ export default function App() {
             </button>
           </div>
           <button
-            class="ghost-button"
+            class="icon-button"
             onClick={openSettings}
             title={t.settingsAria}
+            aria-label={t.settingsAria}
           >
-            <SettingsIcon /> {t.settings}
+            <SettingsIcon size={15} />
           </button>
           <button
-            class="ghost-button"
+            class={`icon-button ${scanning ? "spinning" : ""}`}
             onClick={() => void doScan()}
             disabled={scanning}
+            title={scanning ? t.scanning : t.rescan}
+            aria-label={scanning ? t.scanning : t.rescan}
           >
-            <RefreshIcon /> {scanning ? t.scanning : t.rescan}
+            <RefreshIcon size={15} />
           </button>
         </div>
       </header>
@@ -470,10 +522,19 @@ export default function App() {
           <option value="updated">{t.sortUpdated}</option>
         </select>
         <div class="toolbar-spacer" />
+        {/* Always rendered (hidden when empty) so Select all never shifts. */}
+        <button
+          class={`ghost-button ${selected.size > 0 ? "" : "cluster-hidden"}`}
+          onClick={clearSelection}
+          tabIndex={selected.size > 0 ? 0 : -1}
+          aria-hidden={selected.size === 0}
+        >
+          {t.clearSelected(selected.size)}
+        </button>
         <button
           class="ghost-button"
           onClick={selectAllVisible}
-          disabled={sortedSessions.length === 0}
+          disabled={sortedSessions.length === 0 || allFilteredSelected}
         >
           {t.selectAll(sortedSessions.length)}
         </button>
@@ -494,14 +555,14 @@ export default function App() {
         )}
         {sortedSessions.map((session, index) => (
           <SessionRow
-            key={session.sessionId}
+            key={session.relPath}
             session={session}
             index={index}
             active={index === activeIndex}
-            checked={selected.has(session.sessionId)}
+            checked={selected.has(session.relPath)}
             maxBytes={maxBytes}
             locale={locale}
-            onToggle={() => toggleSelected(session.sessionId)}
+            onToggle={() => toggleSelected(session.relPath)}
           />
         ))}
       </div>
@@ -518,9 +579,6 @@ export default function App() {
           <span class="selection-summary">
             {t.selectedSummary(selected.size, formatSize(selectedBytes))}
           </span>
-          <button class="ghost-button" onClick={clearSelection}>
-            {t.clearSelection}
-          </button>
           <button
             class="danger-button"
             onClick={openConfirm}

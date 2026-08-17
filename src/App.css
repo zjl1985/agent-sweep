@@ -1,39 +1,95 @@
+/* Design language: Cursor / ChatGPT desktop-web — quiet neutral surfaces,
+   hairline borders, monochrome primary actions, one restrained blue accent. */
+
 :root {
   font-family:
     ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
     "PingFang SC", "Noto Sans CJK SC", sans-serif;
-  color: #20211f;
-  background: #f5f5f1;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
-  --surface: #fbfbf8;
-  --surface-raised: #ffffff;
-  --surface-muted: #f2f2ed;
-  --border: #dfdfd8;
-  --border-strong: #cacac1;
-  --text: #20211f;
-  --text-secondary: #6e7069;
-  --text-tertiary: #8a8c85;
-  --accent: #6677df;
-  --accent-hover: #5668d1;
-  --accent-soft: #eceefd;
-  --accent-text: #4f5fc2;
-  --primary-bg: #4f5fc2;
-  --primary-hover: #4656b5;
-  --primary-text: #ffffff;
-  --success: #2f7d45;
-  --success-soft: #e8f5ea;
-  --danger: #a74339;
-  --danger-hover: #96392f;
-  --danger-soft: #faece9;
-  --warning: #82641e;
-  --warning-soft: #faf3dd;
-  --focus: #28795a;
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
   color-scheme: light;
+
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-muted: #f4f4f3;
+  --surface-hover: #efefed;
+  --border: #e7e7e4;
+  --border-strong: #d6d6d2;
+  --text: #0d0d0d;
+  --text-secondary: #5d5d5d;
+  --text-tertiary: #93938f;
+
+  --accent: #0a84ff;
+  --accent-hover: #0a74e8;
+  --accent-soft: rgba(10, 132, 255, 0.1);
+  --accent-text: #0a6ede;
+
+  --primary-bg: #0d0d0d;
+  --primary-hover: #2b2b2b;
+  --primary-text: #ffffff;
+
+  --success: #1f7a3d;
+  --success-soft: rgba(31, 122, 61, 0.1);
+  --danger: #d92d20;
+  --danger-hover: #b42318;
+  --danger-soft: rgba(217, 45, 32, 0.09);
+  --warning: #8a5a00;
+  --warning-soft: rgba(220, 148, 22, 0.12);
+
+  --focus: var(--accent);
+  --ring-soft: rgba(10, 132, 255, 0.16);
+
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.14),
+    0 2px 8px rgba(0, 0, 0, 0.06);
+  --backdrop: rgba(15, 15, 15, 0.32);
+  --chip-shadow: 0 1px 2px rgba(0, 0, 0, 0.07);
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  color: var(--text);
+  background: var(--surface);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface: #212121;
+  --surface-raised: #2f2f2f;
+  --surface-muted: #282828;
+  --surface-hover: #353535;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --text: #ececec;
+  --text-secondary: #b3b3b3;
+  --text-tertiary: #7e7e7e;
+
+  --accent: #0a84ff;
+  --accent-hover: #2f97ff;
+  --accent-soft: rgba(10, 132, 255, 0.18);
+  --accent-text: #5ea9ff;
+
+  --primary-bg: #ececec;
+  --primary-hover: #d5d5d5;
+  --primary-text: #0d0d0d;
+
+  --success: #4cc38a;
+  --success-soft: rgba(76, 195, 138, 0.14);
+  --danger: #e5484d;
+  --danger-hover: #f2555a;
+  --danger-soft: rgba(229, 72, 77, 0.14);
+  --warning: #e5a13d;
+  --warning-soft: rgba(229, 161, 61, 0.14);
+
+  --ring-soft: rgba(10, 132, 255, 0.28);
+
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.55),
+    0 2px 8px rgba(0, 0, 0, 0.35);
+  --backdrop: rgba(0, 0, 0, 0.6);
+  --chip-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 * {
@@ -53,6 +109,9 @@ body,
 body {
   min-height: 100vh;
   overflow: hidden;
+  /* Pin the line box: CJK and Latin fonts have different "normal"
+     line-heights, so an explicit value keeps EN/ZH layouts identical. */
+  line-height: 1.4;
 }
 
 button,
@@ -68,15 +127,24 @@ button {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
-[tabindex="0"]:focus-visible,
-label:has(input:focus-visible) {
+[tabindex="0"]:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
+/* Keep the ring on the radio circle itself, not its whole row. */
+.mode-fieldset input[type="radio"]:focus-visible {
+  outline-offset: 1px;
+  border-radius: 50%;
+}
+
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  opacity: 0.45;
+}
+
+::selection {
+  background: var(--accent-soft);
 }
 
 .sr-only {
@@ -105,20 +173,20 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 18px 24px 12px;
+  padding: 16px 24px 10px;
 }
 
 .brand-title {
   margin: 0;
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 650;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 .brand-sub {
   margin: 2px 0 0;
   font-size: 12.5px;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
 }
 
 .header-actions {
@@ -127,21 +195,58 @@ button:disabled {
   align-items: center;
 }
 
-/* ---------- Language switch ---------- */
+/* ---------- Icon button (theme toggle) ---------- */
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.icon-button:hover {
+  background: var(--surface-muted);
+  color: var(--text);
+}
+
+.icon-button:active {
+  transform: scale(0.94);
+}
+
+.icon-button.spinning svg {
+  animation: icon-spin 0.8s linear infinite;
+}
+
+@keyframes icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- Segmented controls (locale, filters) ---------- */
 
 .locale-switch {
   display: flex;
   gap: 2px;
   padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-raised);
+  border-radius: 9px;
+  background: var(--surface-muted);
 }
 
 .locale-switch .chip {
   padding: 3px 9px;
   font-size: 12px;
-  border-radius: 6px;
+  border-radius: 7px;
 }
 
 /* ---------- Buttons ---------- */
@@ -152,17 +257,21 @@ button:disabled {
   gap: 6px;
   padding: 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-raised);
+  border-radius: 9px;
+  background: transparent;
   color: var(--text);
   font-size: 13px;
   cursor: pointer;
-  transition: transform 160ms var(--ease-out), background-color 120ms ease;
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 120ms ease,
+    border-color 120ms ease;
   white-space: nowrap;
 }
 
 .ghost-button:hover:not(:disabled) {
   background: var(--surface-muted);
+  border-color: var(--border-strong);
 }
 
 .ghost-button:active:not(:disabled) {
@@ -175,12 +284,15 @@ button:disabled {
   gap: 6px;
   padding: 6px 14px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 9px;
   background: var(--primary-bg);
   color: var(--primary-text);
   font-size: 13px;
+  font-weight: 550;
   cursor: pointer;
-  transition: transform 160ms var(--ease-out), background-color 120ms ease;
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 120ms ease;
   white-space: nowrap;
 }
 
@@ -198,12 +310,15 @@ button:disabled {
   gap: 6px;
   padding: 6px 14px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 9px;
   background: var(--danger);
   color: #fff;
   font-size: 13px;
+  font-weight: 550;
   cursor: pointer;
-  transition: transform 160ms var(--ease-out), background-color 120ms ease;
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 120ms ease;
   white-space: nowrap;
 }
 
@@ -223,7 +338,7 @@ button:disabled {
   gap: 10px;
   margin: 0 24px 10px;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: 9px;
   font-size: 13px;
 }
 
@@ -249,7 +364,7 @@ button:disabled {
 }
 
 .banner-close:hover {
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(127, 127, 127, 0.16);
 }
 
 /* ---------- Stats cards ---------- */
@@ -267,7 +382,7 @@ button:disabled {
   gap: 3px;
   padding: 12px 16px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--surface-raised);
 }
 
@@ -277,9 +392,9 @@ button:disabled {
 }
 
 .stat-value {
-  font-size: 21px;
+  font-size: 20px;
   font-weight: 650;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
 }
 
@@ -317,9 +432,8 @@ button:disabled {
 
 .overview-chip {
   padding: 3px 9px;
-  border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--surface-raised);
+  background: var(--surface-muted);
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
   cursor: default;
@@ -343,17 +457,23 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 7px;
-  min-width: 240px;
-  flex: 0 1 320px;
+  min-width: 140px;
+  flex: 1 1 200px;
   padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-raised);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--surface-muted);
   color: var(--text-tertiary);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .search-box:focus-within {
+  background: var(--surface-raised);
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring-soft);
 }
 
 .search-box input {
@@ -376,22 +496,24 @@ button:disabled {
 
 .chip-group {
   display: flex;
-  gap: 4px;
-  padding: 3px;
-  border: 1px solid var(--border);
+  gap: 2px;
+  padding: 2px;
   border-radius: 9px;
-  background: var(--surface-raised);
+  background: var(--surface-muted);
 }
 
 .chip {
   border: none;
-  border-radius: 6px;
+  border-radius: 7px;
   padding: 4px 10px;
   background: transparent;
   color: var(--text-secondary);
   font-size: 12.5px;
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -400,20 +522,29 @@ button:disabled {
   color: var(--text);
 }
 
-.chip-active {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  font-weight: 600;
+.chip-active,
+.chip-active:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+  font-weight: 550;
+  box-shadow: var(--chip-shadow);
 }
 
 .select {
   padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-raised);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--surface-muted);
   color: var(--text);
   font-size: 13px;
   cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.select:hover {
+  background: var(--surface-hover);
 }
 
 /* ---------- Session list ---------- */
@@ -432,6 +563,22 @@ button:disabled {
 .session-list:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+.session-list::-webkit-scrollbar {
+  width: 12px;
+}
+
+.session-list::-webkit-scrollbar-thumb {
+  border: 4px solid transparent;
+  border-radius: 8px;
+  background: var(--border-strong);
+  background-clip: padding-box;
+}
+
+.session-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+  background-clip: padding-box;
 }
 
 .empty-state {
@@ -460,15 +607,18 @@ button:disabled {
   background: var(--surface-muted);
 }
 
-.row-active {
-  background: var(--accent-soft);
-}
-
+.row-active,
 .row-active:hover {
   background: var(--accent-soft);
 }
 
-.row-checked {
+.row-checked,
+.row-checked:hover {
+  background: var(--surface-muted);
+}
+
+.row-checked.row-active,
+.row-checked.row-active:hover {
   background: var(--accent-soft);
 }
 
@@ -574,10 +724,7 @@ button:disabled {
   height: 100%;
   border-radius: 2px;
   background: var(--accent);
-}
-
-.row-checked .size-bar-fill {
-  background: var(--accent-text);
+  opacity: 0.75;
 }
 
 /* ---------- Selection bar ---------- */
@@ -624,17 +771,17 @@ button:disabled {
 
 .dialog {
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 16px;
   padding: 22px 24px 18px;
   min-width: 380px;
   max-width: 92vw;
   background: var(--surface-raised);
   color: var(--text);
-  box-shadow: 0 18px 50px rgba(32, 33, 31, 0.16);
+  box-shadow: var(--shadow-dialog);
 }
 
 .dialog::backdrop {
-  background: rgba(32, 33, 31, 0.28);
+  background: var(--backdrop);
 }
 
 .dialog[open] {
@@ -656,6 +803,7 @@ button:disabled {
   margin: 0 0 10px;
   font-size: 16px;
   font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .dialog p {
@@ -703,4 +851,25 @@ button:disabled {
 .settings-note {
   font-size: 12px !important;
   color: var(--text-tertiary) !important;
+}
+
+/* ---------- Reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog[open] {
+    animation: none;
+  }
+
+  .icon-button.spinning svg {
+    animation: none;
+  }
+
+  .icon-button,
+  .ghost-button,
+  .primary-button,
+  .danger-button {
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease;
+  }
 }

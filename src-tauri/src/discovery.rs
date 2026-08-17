@@ -41,7 +41,7 @@ pub fn scan_codex_at(root: &Path, now_ms: i64) -> ScanResult {
 
     let sessions_root = root.join("sessions");
     if sessions_root.is_dir() {
-        collect_rollout_files(&sessions_root, 4, false, &titles, &mut sessions);
+        collect_rollout_files(&sessions_root, 4, false, "sessions", &titles, &mut sessions);
     } else {
         result
             .issues
@@ -51,7 +51,7 @@ pub fn scan_codex_at(root: &Path, now_ms: i64) -> ScanResult {
     // A missing archive directory is normal, not an issue.
     let archived_root = root.join("archived_sessions");
     if archived_root.is_dir() {
-        collect_rollout_files(&archived_root, 1, true, &titles, &mut sessions);
+        collect_rollout_files(&archived_root, 1, true, "archived_sessions", &titles, &mut sessions);
     }
 
     for session in &sessions {
@@ -79,6 +79,7 @@ fn collect_rollout_files(
     root: &Path,
     depth: usize,
     archived: bool,
+    rel_prefix: &str,
     titles: &HashMap<String, String>,
     out: &mut Vec<SessionEntry>,
 ) {
@@ -120,6 +121,10 @@ fn collect_rollout_files(
             .get(&session_id)
             .cloned()
             .unwrap_or_else(|| fallback_title(&workspace, created_at_ms));
+        let rel_path = match path.strip_prefix(root) {
+            Ok(rel) => format!("{rel_prefix}/{}", rel.to_string_lossy()),
+            Err(_) => name.to_string(),
+        };
         out.push(SessionEntry {
             session_id,
             title,
@@ -129,6 +134,7 @@ fn collect_rollout_files(
             size_bytes: metadata.len(),
             archived,
             file_name: name.to_string(),
+            rel_path,
         });
     }
 }
@@ -475,6 +481,37 @@ mod tests {
         // Without an index entry or metadata, fall back to the filename
         // timestamp for the title.
         assert!(c.title.contains("2026-07-01"));
+    }
+
+    #[test]
+    fn duplicate_session_ids_still_yield_unique_rel_paths() {
+        // Resumed sessions can write several rollout files that share one
+        // session_meta id; selection and deletion key off rel_path instead.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let meta = r#"{"timestamp":"2026-07-11T01:24:00.000Z","type":"session_meta","payload":{"session_id":"019f4ec3-0000-7000-8000-000000000000","cwd":"/Users/zero/code/agent-hub"}}"#;
+        write_file(
+            &root.join("sessions/2026/07/11/rollout-2026-07-11T09-24-00-019f4ec3-0000-7000-8000-000000000000.jsonl"),
+            &format!("{meta}\n"),
+        );
+        write_file(
+            &root.join("archived_sessions/rollout-2026-07-11T09-34-00-019faaaa-0000-7000-8000-000000000000.jsonl"),
+            &format!("{meta}\n"),
+        );
+
+        let result = scan_codex_at(root, 0);
+        assert_eq!(result.sessions.len(), 2);
+        assert!(result
+            .sessions
+            .iter()
+            .all(|s| s.session_id == "019f4ec3-0000-7000-8000-000000000000"));
+        let rel_paths: Vec<&str> = result
+            .sessions
+            .iter()
+            .map(|s| s.rel_path.as_str())
+            .collect();
+        assert!(rel_paths.contains(&"sessions/2026/07/11/rollout-2026-07-11T09-24-00-019f4ec3-0000-7000-8000-000000000000.jsonl"));
+        assert!(rel_paths.contains(&"archived_sessions/rollout-2026-07-11T09-34-00-019faaaa-0000-7000-8000-000000000000.jsonl"));
     }
 
     #[test]
