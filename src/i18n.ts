@@ -61,7 +61,7 @@ export interface Strings {
 }
 
 const en: Strings = {
-  brandSubtitle: "Inspect and clean local Codex session storage",
+  brandSubtitle: "Inspect and clean local ChatGPT / Codex session storage",
   settings: "Settings",
   settingsTitle: "Settings",
   settingsAria: "Settings (⌘,)",
@@ -124,7 +124,7 @@ const en: Strings = {
 };
 
 const zh: Strings = {
-  brandSubtitle: "统计与管理本机 Codex 会话占用",
+  brandSubtitle: "统计与管理本机 ChatGPT / Codex 会话占用",
   settings: "设置",
   settingsTitle: "设置",
   settingsAria: "设置 (⌘,)",

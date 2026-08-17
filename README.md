@@ -1,6 +1,6 @@
 # CodexClear
 
-A local-first desktop app for inspecting and cleaning [OpenAI Codex CLI](https://developers.openai.com/codex/) session storage. Built with Tauri 2 (Rust backend + Preact frontend), following the architecture conventions of the baton handoff app: all file system work lives in Rust, the web layer is presentation only.
+A local-first desktop app for inspecting and cleaning the local session storage shared by the **ChatGPT app**, the **Codex desktop app**, and the **[Codex CLI](https://developers.openai.com/codex/)** — all three keep their chat/session rollout files under `~/.codex`. Built with Tauri 2 (Rust backend + Preact frontend), following the architecture conventions of the baton handoff app: all file system work lives in Rust, the web layer is presentation only.
 
 <p align="center">
   <img src="docs/screenshot-light.png#gh-light-mode-only" alt="CodexClear — light theme" width="820">
