@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use crate::discovery::codex_home;
-use crate::models::{DeleteFailure, DeleteMode, DeleteRequest, DeleteResult};
+use crate::models::{ArchiveRequest, ArchiveResult, DeleteFailure, DeleteMode, DeleteRequest, DeleteResult};
 
 pub fn delete(request: DeleteRequest) -> DeleteResult {
     match codex_home() {
@@ -64,6 +64,95 @@ pub fn delete_at(request: DeleteRequest, codex_root: &Path) -> DeleteResult {
             Err(message) => result.failed.push(DeleteFailure {
                 path: rel.clone(),
                 message,
+            }),
+        }
+    }
+    result
+}
+
+pub fn archive(request: ArchiveRequest) -> ArchiveResult {
+    match codex_home() {
+        Some(home) => archive_at(request, &home),
+        None => ArchiveResult {
+            archived_count: 0,
+            failed: vec![DeleteFailure {
+                path: String::new(),
+                message: "Could not locate the user home directory".to_string(),
+            }],
+        },
+    }
+}
+
+/// Moves active rollout files into archived_sessions/ (flat, same file name),
+/// mirroring what the Codex CLI itself does when archiving a session.
+pub fn archive_at(request: ArchiveRequest, codex_root: &Path) -> ArchiveResult {
+    let mut result = ArchiveResult {
+        archived_count: 0,
+        failed: Vec::new(),
+    };
+    let sessions_root = codex_root.join("sessions");
+    let archived_root = codex_root.join("archived_sessions");
+    let allowed_roots: Vec<PathBuf> = [&sessions_root, &archived_root]
+        .into_iter()
+        .filter_map(|root| fs::canonicalize(root).ok())
+        .collect();
+    if allowed_roots.is_empty() {
+        result.failed.push(DeleteFailure {
+            path: String::new(),
+            message: "No sessions/ or archived_sessions/ directory found".to_string(),
+        });
+        return result;
+    }
+    if let Err(error) = fs::create_dir_all(&archived_root) {
+        result.failed.push(DeleteFailure {
+            path: String::new(),
+            message: format!("Failed to create archived_sessions/: {error}"),
+        });
+        return result;
+    }
+
+    for rel in &request.paths {
+        let validated = resolve_rel_path(rel)
+            .map(|rel_path| codex_root.join(rel_path))
+            .and_then(|path| {
+                validate_session_file(&path, &allowed_roots).map(|_| path)
+            });
+        let path = match validated {
+            Ok(path) => path,
+            Err(message) => {
+                result.failed.push(DeleteFailure {
+                    path: rel.clone(),
+                    message,
+                });
+                continue;
+            }
+        };
+        if rel.starts_with("archived_sessions/") {
+            result.failed.push(DeleteFailure {
+                path: rel.clone(),
+                message: "Already archived".to_string(),
+            });
+            continue;
+        }
+        let name = path.file_name().expect("validated rollout file");
+        let target = archived_root.join(name);
+        if target.exists() {
+            result.failed.push(DeleteFailure {
+                path: rel.clone(),
+                message: "An archived session with the same file name already exists".to_string(),
+            });
+            continue;
+        }
+        match fs::rename(&path, &target) {
+            Ok(()) => {
+                result.archived_count += 1;
+                if let Some(parent) = path.parent() {
+                    prune_empty_parents(parent, &sessions_root);
+                }
+            }
+            Err(error) => result.failed.push(DeleteFailure {
+                path: rel.clone(),
+                message: format!("Failed to archive: {error}"),
             }),
         }
     }
@@ -345,5 +434,107 @@ mod tests {
         assert!(result.failed[0]
             .message
             .contains("No sessions/ or archived_sessions"));
+    }
+
+    #[test]
+    fn archive_moves_files_and_prunes_empty_date_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let file = root.join(active(
+            "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-000000000001.jsonl",
+        ));
+        write_rollout(&file, "hello");
+        let kept = root.join("sessions/2026/08/15/rollout-2026-08-15T09-00-00-01a00000-0000-0000-0000-000000000002.jsonl");
+        write_rollout(&kept, "keep me");
+
+        let result = archive_at(
+            ArchiveRequest {
+                paths: vec![active(
+                    "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-000000000001.jsonl",
+                )],
+            },
+            root,
+        );
+
+        assert!(result.failed.is_empty());
+        assert_eq!(result.archived_count, 1);
+        assert!(!file.exists());
+        assert_eq!(
+            fs::read_to_string(root.join("archived_sessions/rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-000000000001.jsonl")).unwrap(),
+            "hello"
+        );
+        assert!(kept.exists());
+        assert!(!root.join("sessions/2026/08/14").exists());
+        assert!(root.join("sessions/2026").exists());
+        assert!(root.join("sessions").exists());
+    }
+
+    #[test]
+    fn archive_rejects_already_archived_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let archived = root.join("archived_sessions/rollout-2026-01-02T00-00-00-01a00000-0000-0000-0000-00000000000b.jsonl");
+        write_rollout(&archived, "old");
+
+        let result = archive_at(
+            ArchiveRequest {
+                paths: vec!["archived_sessions/rollout-2026-01-02T00-00-00-01a00000-0000-0000-0000-00000000000b.jsonl".to_string()],
+            },
+            root,
+        );
+
+        assert_eq!(result.archived_count, 0);
+        assert_eq!(result.failed.len(), 1);
+        assert!(result.failed[0].message.contains("Already archived"));
+        assert!(archived.exists());
+    }
+
+    #[test]
+    fn archive_never_overwrites_an_existing_archived_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let name = "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-000000000001.jsonl";
+        let file = root.join(active(name));
+        write_rollout(&file, "new");
+        let existing = root.join("archived_sessions").join(name);
+        write_rollout(&existing, "old");
+
+        let result = archive_at(
+            ArchiveRequest {
+                paths: vec![active(name)],
+            },
+            root,
+        );
+
+        assert_eq!(result.archived_count, 0);
+        assert_eq!(result.failed.len(), 1);
+        assert!(result.failed[0].message.contains("same file name"));
+        // Both copies are intact.
+        assert_eq!(fs::read_to_string(&file).unwrap(), "new");
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "old");
+    }
+
+    #[test]
+    fn archive_rejects_paths_outside_the_session_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("sessions")).unwrap();
+        let outside = root.join("plugins/rollout-x.jsonl");
+        write_rollout(&outside, "do not touch");
+
+        let result = archive_at(
+            ArchiveRequest {
+                paths: vec![
+                    "sessions/../../plugins/rollout-x.jsonl".to_string(),
+                    "/etc/passwd".to_string(),
+                    "plugins/rollout-x.jsonl".to_string(),
+                ],
+            },
+            root,
+        );
+
+        assert_eq!(result.archived_count, 0);
+        assert_eq!(result.failed.len(), 3);
+        assert!(outside.exists());
     }
 }

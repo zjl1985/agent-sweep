@@ -80,6 +80,20 @@ pub struct DeleteFailure {
     pub message: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveRequest {
+    /// Paths relative to the Codex home, as reported by the scan.
+    pub paths: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveResult {
+    pub archived_count: u32,
+    pub failed: Vec<DeleteFailure>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteResult {

@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from "preact/hooks";
-import { deleteSessions, scanSessions } from "./api";
+import { archiveSessions, deleteSessions, scanSessions } from "./api";
 import type { DeleteMode, ScanResult, SessionEntry } from "./types";
 import {
   loadLocale,
@@ -80,6 +80,7 @@ export default function App() {
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -207,6 +208,12 @@ export default function App() {
     0,
   );
 
+  // Only active sessions can be archived; already-archived ones are skipped.
+  const archivableSessions = useMemo(
+    () => selectedSessions.filter((s) => !s.archived),
+    [selectedSessions],
+  );
+
   const allFilteredSelected =
     sortedSessions.length > 0 &&
     sortedSessions.every((session) => selected.has(session.relPath));
@@ -285,6 +292,32 @@ export default function App() {
       setDeleting(false);
     }
   }, [selected, dialogMode, closeConfirm, doScan, locale]);
+
+  const performArchive = useCallback(async () => {
+    setArchiving(true);
+    try {
+      const result = await archiveSessions({
+        paths: archivableSessions.map((session) => session.relPath),
+      });
+      const summary = strings[locale].archivedNotice(result.archivedCount);
+      if (result.failed.length > 0) {
+        setError(
+          summary +
+            strings[locale].archiveFailedSuffix(
+              result.failed.length,
+              localizeMessage(result.failed[0].message, locale),
+            ),
+        );
+      } else {
+        setNotice(summary);
+      }
+      await doScan();
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setArchiving(false);
+    }
+  }, [archivableSessions, doScan, locale]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -579,6 +612,13 @@ export default function App() {
           <span class="selection-summary">
             {t.selectedSummary(selected.size, formatSize(selectedBytes))}
           </span>
+          <button
+            class="ghost-button"
+            onClick={() => void performArchive()}
+            disabled={archiving || deleting || archivableSessions.length === 0}
+          >
+            <ArchiveIcon /> {t.archiveSelected}
+          </button>
           <button
             class="danger-button"
             onClick={openConfirm}

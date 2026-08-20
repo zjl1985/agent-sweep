@@ -40,6 +40,7 @@ export interface Strings {
   hint: string;
   selectedSummary: (count: number, size: string) => string;
   clearSelected: (count: number) => string;
+  archiveSelected: string;
   deleteSelected: string;
   confirmTitle: string;
   confirmBody: (count: number, size: string) => string;
@@ -58,6 +59,8 @@ export interface Strings {
   scanNotice: (count: number, size: string) => string;
   deletedNotice: (count: number, size: string) => string;
   deleteFailedSuffix: (count: number, message: string) => string;
+  archivedNotice: (count: number) => string;
+  archiveFailedSuffix: (count: number, message: string) => string;
 }
 
 const en: Strings = {
@@ -101,6 +104,7 @@ const en: Strings = {
   hint: "Click a row to select it; use arrow keys to navigate, space or enter to toggle",
   selectedSummary: (count, size) => `${count} selected · ${size}`,
   clearSelected: (count) => `Clear (${count})`,
+  archiveSelected: "Archive",
   deleteSelected: "Delete…",
   confirmTitle: "Delete sessions",
   confirmBody: (count, size) =>
@@ -121,6 +125,8 @@ const en: Strings = {
   scanNotice: (count, size) => `Scanned ${count} sessions, ${size} total`,
   deletedNotice: (count, size) => `Deleted ${count} sessions, freed ${size}`,
   deleteFailedSuffix: (count, message) => `; ${count} failed: ${message}`,
+  archivedNotice: (count) => `Archived ${count} sessions`,
+  archiveFailedSuffix: (count, message) => `; ${count} failed: ${message}`,
 };
 
 const zh: Strings = {
@@ -163,6 +169,7 @@ const zh: Strings = {
   hint: "点击行勾选会话；方向键导航，空格或回车切换勾选",
   selectedSummary: (count, size) => `已选 ${count} 个 · 共 ${size}`,
   clearSelected: (count) => `清除（${count}）`,
+  archiveSelected: "归档",
   deleteSelected: "删除…",
   confirmTitle: "删除会话",
   confirmBody: (count, size) => `即将处理 ${count} 个会话，共 ${size}。`,
@@ -182,6 +189,8 @@ const zh: Strings = {
   scanNotice: (count, size) => `已扫描 ${count} 个会话，共 ${size}`,
   deletedNotice: (count, size) => `已删除 ${count} 个会话，释放 ${size}`,
   deleteFailedSuffix: (count, message) => `；${count} 个失败：${message}`,
+  archivedNotice: (count) => `已归档 ${count} 个会话`,
+  archiveFailedSuffix: (count, message) => `；${count} 个失败：${message}`,
 };
 
 export const strings: Record<Locale, Strings> = { en, zh };
@@ -225,6 +234,16 @@ const zhMessagePrefixes: [string, string][] = [
   ],
   ["Failed to move to trash:", "移入废纸篓失败："],
   ["Failed to delete:", "删除失败："],
+  ["Already archived", "已是归档会话"],
+  [
+    "An archived session with the same file name already exists",
+    "已存在同名的归档会话文件",
+  ],
+  ["Failed to archive:", "归档失败："],
+  [
+    "Failed to create archived_sessions/:",
+    "创建 archived_sessions/ 目录失败：",
+  ],
 ];
 
 export function localizeMessage(message: string, locale: Locale): string {

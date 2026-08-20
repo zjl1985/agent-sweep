@@ -37,6 +37,10 @@ export interface DeleteRequest {
   mode: DeleteMode;
 }
 
+export interface ArchiveRequest {
+  paths: string[];
+}
+
 export interface DeleteFailure {
   path: string;
   message: string;
@@ -45,5 +49,10 @@ export interface DeleteFailure {
 export interface DeleteResult {
   deletedCount: number;
   freedBytes: number;
+  failed: DeleteFailure[];
+}
+
+export interface ArchiveResult {
+  archivedCount: number;
   failed: DeleteFailure[];
 }

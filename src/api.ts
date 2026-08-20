@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DeleteRequest, DeleteResult, ScanResult } from "./types";
+import type {
+  ArchiveRequest,
+  ArchiveResult,
+  DeleteRequest,
+  DeleteResult,
+  ScanResult,
+} from "./types";
 
 function assertDesktopRuntime() {
   if (!("__TAURI_INTERNALS__" in window)) {
@@ -17,4 +23,9 @@ export async function scanSessions(): Promise<ScanResult> {
 export async function deleteSessions(request: DeleteRequest): Promise<DeleteResult> {
   assertDesktopRuntime();
   return invoke<DeleteResult>("delete_sessions", { request });
+}
+
+export async function archiveSessions(request: ArchiveRequest): Promise<ArchiveResult> {
+  assertDesktopRuntime();
+  return invoke<ArchiveResult>("archive_sessions", { request });
 }
