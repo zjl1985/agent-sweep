@@ -1,27 +1,29 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use crate::discovery::codex_home;
-use crate::models::{ArchiveRequest, ArchiveResult, DeleteFailure, DeleteMode, DeleteRequest, DeleteResult};
+use crate::models::{ArchiveResult, DeleteMode, DeleteResult, OperationFailure};
 
-pub fn delete(request: DeleteRequest) -> DeleteResult {
-    match codex_home() {
-        Some(home) => delete_at(request, &home),
-        None => DeleteResult {
-            deleted_count: 0,
-            freed_bytes: 0,
-            failed: vec![DeleteFailure {
-                path: String::new(),
-                message: "Could not locate the user home directory".to_string(),
-            }],
-        },
+use super::CODEX_PROVIDER_ID;
+
+pub(super) fn failure(
+    session_key: impl Into<String>,
+    message: impl Into<String>,
+) -> OperationFailure {
+    OperationFailure {
+        provider_id: CODEX_PROVIDER_ID.to_string(),
+        session_key: session_key.into(),
+        message: message.into(),
     }
 }
 
-/// The frontend only sends paths relative to the Codex home (as reported by
-/// the scan); the backend validates each one before deleting — absolute paths
-/// never leave the Rust side (same locator idea as baton).
-pub fn delete_at(request: DeleteRequest, codex_root: &Path) -> DeleteResult {
+/// The adapter only accepts opaque keys previously reported by the scan. For
+/// Codex those keys are paths relative to the Codex home; every key is
+/// validated again here before any filesystem operation.
+pub(super) fn delete_at(
+    session_keys: &[String],
+    mode: DeleteMode,
+    codex_root: &Path,
+) -> DeleteResult {
     let mut result = DeleteResult {
         deleted_count: 0,
         freed_bytes: 0,
@@ -34,21 +36,19 @@ pub fn delete_at(request: DeleteRequest, codex_root: &Path) -> DeleteResult {
         .filter_map(|root| fs::canonicalize(root).ok())
         .collect();
     if allowed_roots.is_empty() {
-        result.failed.push(DeleteFailure {
-            path: String::new(),
-            message: "No sessions/ or archived_sessions/ directory found".to_string(),
-        });
+        result.failed.push(failure(
+            String::new(),
+            "No sessions/ or archived_sessions/ directory found".to_string(),
+        ));
         return result;
     }
 
-    for rel in &request.paths {
+    for rel in session_keys {
         let validated = resolve_rel_path(rel)
             .map(|rel_path| codex_root.join(rel_path))
-            .and_then(|path| {
-                validate_session_file(&path, &allowed_roots).map(|size| (path, size))
-            });
+            .and_then(|path| validate_session_file(&path, &allowed_roots).map(|size| (path, size)));
         match validated {
-            Ok((path, size)) => match remove(&path, request.mode) {
+            Ok((path, size)) => match remove(&path, mode) {
                 Ok(()) => {
                     result.deleted_count += 1;
                     result.freed_bytes += size;
@@ -56,36 +56,15 @@ pub fn delete_at(request: DeleteRequest, codex_root: &Path) -> DeleteResult {
                         prune_empty_parents(parent, &sessions_root);
                     }
                 }
-                Err(error) => result.failed.push(DeleteFailure {
-                    path: rel.clone(),
-                    message: error.to_string(),
-                }),
+                Err(error) => result.failed.push(failure(rel.clone(), error.to_string())),
             },
-            Err(message) => result.failed.push(DeleteFailure {
-                path: rel.clone(),
-                message,
-            }),
+            Err(message) => result.failed.push(failure(rel.clone(), message)),
         }
     }
     result
 }
 
-pub fn archive(request: ArchiveRequest) -> ArchiveResult {
-    match codex_home() {
-        Some(home) => archive_at(request, &home),
-        None => ArchiveResult {
-            archived_count: 0,
-            failed: vec![DeleteFailure {
-                path: String::new(),
-                message: "Could not locate the user home directory".to_string(),
-            }],
-        },
-    }
-}
-
-/// Moves active rollout files into archived_sessions/ (flat, same file name),
-/// mirroring what the Codex CLI itself does when archiving a session.
-pub fn archive_at(request: ArchiveRequest, codex_root: &Path) -> ArchiveResult {
+pub(super) fn archive_at(session_keys: &[String], codex_root: &Path) -> ArchiveResult {
     let mut result = ArchiveResult {
         archived_count: 0,
         failed: Vec::new(),
@@ -97,50 +76,44 @@ pub fn archive_at(request: ArchiveRequest, codex_root: &Path) -> ArchiveResult {
         .filter_map(|root| fs::canonicalize(root).ok())
         .collect();
     if allowed_roots.is_empty() {
-        result.failed.push(DeleteFailure {
-            path: String::new(),
-            message: "No sessions/ or archived_sessions/ directory found".to_string(),
-        });
+        result.failed.push(failure(
+            String::new(),
+            "No sessions/ or archived_sessions/ directory found".to_string(),
+        ));
         return result;
     }
     if let Err(error) = fs::create_dir_all(&archived_root) {
-        result.failed.push(DeleteFailure {
-            path: String::new(),
-            message: format!("Failed to create archived_sessions/: {error}"),
-        });
+        result.failed.push(failure(
+            String::new(),
+            format!("Failed to create archived_sessions/: {error}"),
+        ));
         return result;
     }
 
-    for rel in &request.paths {
+    for rel in session_keys {
         let validated = resolve_rel_path(rel)
             .map(|rel_path| codex_root.join(rel_path))
-            .and_then(|path| {
-                validate_session_file(&path, &allowed_roots).map(|_| path)
-            });
+            .and_then(|path| validate_session_file(&path, &allowed_roots).map(|_| path));
         let path = match validated {
             Ok(path) => path,
             Err(message) => {
-                result.failed.push(DeleteFailure {
-                    path: rel.clone(),
-                    message,
-                });
+                result.failed.push(failure(rel.clone(), message));
                 continue;
             }
         };
         if rel.starts_with("archived_sessions/") {
-            result.failed.push(DeleteFailure {
-                path: rel.clone(),
-                message: "Already archived".to_string(),
-            });
+            result
+                .failed
+                .push(failure(rel.clone(), "Already archived".to_string()));
             continue;
         }
         let name = path.file_name().expect("validated rollout file");
         let target = archived_root.join(name);
         if target.exists() {
-            result.failed.push(DeleteFailure {
-                path: rel.clone(),
-                message: "An archived session with the same file name already exists".to_string(),
-            });
+            result.failed.push(failure(
+                rel.clone(),
+                "An archived session with the same file name already exists".to_string(),
+            ));
             continue;
         }
         match fs::rename(&path, &target) {
@@ -150,10 +123,9 @@ pub fn archive_at(request: ArchiveRequest, codex_root: &Path) -> ArchiveResult {
                     prune_empty_parents(parent, &sessions_root);
                 }
             }
-            Err(error) => result.failed.push(DeleteFailure {
-                path: rel.clone(),
-                message: format!("Failed to archive: {error}"),
-            }),
+            Err(error) => result
+                .failed
+                .push(failure(rel.clone(), format!("Failed to archive: {error}"))),
         }
     }
     result
@@ -183,7 +155,10 @@ fn resolve_rel_path(rel: &str) -> Result<&Path, String> {
 /// sessions/ or archived_sessions/. symlink_metadata does not follow symbolic
 /// links, and the canonicalize prefix check prevents path escapes.
 fn validate_session_file(path: &Path, allowed_roots: &[PathBuf]) -> Result<u64, String> {
-    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
     if !(name.starts_with("rollout-") && name.ends_with(".jsonl")) {
         return Err("Only rollout-*.jsonl session files can be deleted".to_string());
     }
@@ -205,8 +180,9 @@ fn remove(path: &Path, mode: DeleteMode) -> anyhow::Result<()> {
         DeleteMode::Trash => {
             trash::delete(path).map_err(|error| anyhow::anyhow!("Failed to move to trash: {error}"))
         }
-        DeleteMode::Permanent => fs::remove_file(path)
-            .map_err(|error| anyhow::anyhow!("Failed to delete: {error}")),
+        DeleteMode::Permanent => {
+            fs::remove_file(path).map_err(|error| anyhow::anyhow!("Failed to delete: {error}"))
+        }
     }
 }
 
@@ -264,12 +240,10 @@ mod tests {
         write_rollout(&kept, "keep me");
 
         let result = delete_at(
-            DeleteRequest {
-                paths: vec![active(
-                    "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-000000000001.jsonl",
-                )],
-                mode: DeleteMode::Permanent,
-            },
+            &[active(
+                "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-000000000001.jsonl",
+            )],
+            DeleteMode::Permanent,
             root,
         );
 
@@ -298,13 +272,11 @@ mod tests {
         write_rollout(&b, "12345678");
 
         let result = delete_at(
-            DeleteRequest {
-                paths: vec![
+            &[
                     active("rollout-2026-01-01T00-00-00-01a00000-0000-0000-0000-00000000000a.jsonl"),
                     "archived_sessions/rollout-2026-01-02T00-00-00-01a00000-0000-0000-0000-00000000000b.jsonl".to_string(),
                 ],
-                mode: DeleteMode::Permanent,
-            },
+            DeleteMode::Permanent,
             root,
         );
 
@@ -324,12 +296,10 @@ mod tests {
         fs::create_dir_all(root.join("sessions")).unwrap();
 
         let result = delete_at(
-            DeleteRequest {
-                paths: vec![active(
-                    "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-0000000dead0.jsonl",
-                )],
-                mode: DeleteMode::Permanent,
-            },
+            &[active(
+                "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-0000000dead0.jsonl",
+            )],
+            DeleteMode::Permanent,
             root,
         );
 
@@ -347,15 +317,13 @@ mod tests {
         write_rollout(&outside, "do not touch");
 
         let result = delete_at(
-            DeleteRequest {
-                paths: vec![
-                    "sessions/../../plugins/rollout-x.jsonl".to_string(),
-                    "archived_sessions/../plugins/rollout-x.jsonl".to_string(),
-                    "/etc/passwd".to_string(),
-                    "plugins/rollout-x.jsonl".to_string(),
-                ],
-                mode: DeleteMode::Permanent,
-            },
+            &[
+                "sessions/../../plugins/rollout-x.jsonl".to_string(),
+                "archived_sessions/../plugins/rollout-x.jsonl".to_string(),
+                "/etc/passwd".to_string(),
+                "plugins/rollout-x.jsonl".to_string(),
+            ],
+            DeleteMode::Permanent,
             root,
         );
 
@@ -371,13 +339,7 @@ mod tests {
         let notes = root.join(active("notes.txt"));
         write_rollout(&notes, "important");
 
-        let result = delete_at(
-            DeleteRequest {
-                paths: vec![active("notes.txt")],
-                mode: DeleteMode::Permanent,
-            },
-            root,
-        );
+        let result = delete_at(&[active("notes.txt")], DeleteMode::Permanent, root);
 
         assert_eq!(result.deleted_count, 0);
         assert_eq!(result.failed.len(), 1);
@@ -387,6 +349,7 @@ mod tests {
         assert!(notes.exists());
     }
 
+    #[cfg(unix)]
     #[test]
     fn delete_never_follows_rollout_shaped_symbolic_links() {
         let dir = tempfile::tempdir().unwrap();
@@ -395,17 +358,16 @@ mod tests {
         fs::write(&target, "precious").unwrap();
         let link_dir = root.join(active(""));
         fs::create_dir_all(&link_dir).unwrap();
-        let link = link_dir.join("rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-00000000000d.jsonl");
+        let link =
+            link_dir.join("rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-00000000000d.jsonl");
         #[cfg(unix)]
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
         let result = delete_at(
-            DeleteRequest {
-                paths: vec![active(
-                    "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-00000000000d.jsonl",
-                )],
-                mode: DeleteMode::Permanent,
-            },
+            &[active(
+                "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-00000000000d.jsonl",
+            )],
+            DeleteMode::Permanent,
             root,
         );
 
@@ -418,16 +380,93 @@ mod tests {
         assert_eq!(contents, "precious");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn archive_rejects_rollout_symbolic_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("precious.jsonl");
+        fs::write(&target, "precious").unwrap();
+        fs::create_dir_all(dir.path().join(active(""))).unwrap();
+        let key = active("rollout-link.jsonl");
+        let link = dir.path().join(&key);
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let result = archive_at(&[key.clone()], dir.path());
+        assert_eq!(result.archived_count, 0);
+        assert_eq!(result.failed[0].provider_id, CODEX_PROVIDER_ID);
+        assert_eq!(result.failed[0].session_key, key);
+        assert!(result.failed[0].message.contains("symbolic link rejected"));
+        assert!(fs::symlink_metadata(link).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_to_string(target).unwrap(), "precious");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn operations_reject_parent_symlink_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("rollout-precious.jsonl");
+        fs::write(&target, "precious").unwrap();
+        fs::create_dir_all(dir.path().join("sessions")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("sessions/escape")).unwrap();
+        let key = "sessions/escape/rollout-precious.jsonl".to_string();
+        for mode in [DeleteMode::Permanent, DeleteMode::Trash] {
+            let result = delete_at(&[key.clone()], mode, dir.path());
+            assert_eq!(result.deleted_count, 0);
+            assert_eq!(result.freed_bytes, 0);
+            assert_eq!(result.failed[0].session_key, key);
+            assert!(result.failed[0]
+                .message
+                .contains("outside the Codex session directories"));
+        }
+        let result = archive_at(&[key.clone()], dir.path());
+        assert_eq!(result.archived_count, 0);
+        assert_eq!(result.failed[0].session_key, key);
+        assert!(result.failed[0]
+            .message
+            .contains("outside the Codex session directories"));
+        assert_eq!(fs::read_to_string(target).unwrap(), "precious");
+        assert!(!dir
+            .path()
+            .join("archived_sessions/rollout-precious.jsonl")
+            .exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_session_root_symlink_remains_supported() {
+        // The configured roots themselves are trusted and canonicalized;
+        // the existing implementation permits symlinked Codex data roots.
+        let dir = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        write_rollout(&data.path().join("rollout-active.jsonl"), "active");
+        std::os::unix::fs::symlink(data.path(), dir.path().join("sessions")).unwrap();
+        let archived = archive_at(&["sessions/rollout-active.jsonl".to_string()], dir.path());
+        assert_eq!(archived.archived_count, 1);
+        assert!(archived.failed.is_empty());
+        assert!(data.path().is_dir());
+        assert!(fs::symlink_metadata(dir.path().join("sessions"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let deleted = delete_at(
+            &["archived_sessions/rollout-active.jsonl".to_string()],
+            DeleteMode::Permanent,
+            dir.path(),
+        );
+        assert_eq!(deleted.deleted_count, 1);
+        assert_eq!(deleted.freed_bytes, 6);
+        assert!(deleted.failed.is_empty());
+    }
+
     #[test]
     fn delete_reports_missing_roots() {
         let dir = tempfile::tempdir().unwrap();
         let result = delete_at(
-            DeleteRequest {
-                paths: vec![active(
-                    "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-00000000000c.jsonl",
-                )],
-                mode: DeleteMode::Permanent,
-            },
+            &[active(
+                "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-00000000000c.jsonl",
+            )],
+            DeleteMode::Permanent,
             dir.path(),
         );
         assert_eq!(result.deleted_count, 0);
@@ -448,11 +487,9 @@ mod tests {
         write_rollout(&kept, "keep me");
 
         let result = archive_at(
-            ArchiveRequest {
-                paths: vec![active(
-                    "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-000000000001.jsonl",
-                )],
-            },
+            &[active(
+                "rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-000000000001.jsonl",
+            )],
             root,
         );
 
@@ -477,9 +514,7 @@ mod tests {
         write_rollout(&archived, "old");
 
         let result = archive_at(
-            ArchiveRequest {
-                paths: vec!["archived_sessions/rollout-2026-01-02T00-00-00-01a00000-0000-0000-0000-00000000000b.jsonl".to_string()],
-            },
+            &["archived_sessions/rollout-2026-01-02T00-00-00-01a00000-0000-0000-0000-00000000000b.jsonl".to_string()],
             root,
         );
 
@@ -499,12 +534,7 @@ mod tests {
         let existing = root.join("archived_sessions").join(name);
         write_rollout(&existing, "old");
 
-        let result = archive_at(
-            ArchiveRequest {
-                paths: vec![active(name)],
-            },
-            root,
-        );
+        let result = archive_at(&[active(name)], root);
 
         assert_eq!(result.archived_count, 0);
         assert_eq!(result.failed.len(), 1);
@@ -523,13 +553,11 @@ mod tests {
         write_rollout(&outside, "do not touch");
 
         let result = archive_at(
-            ArchiveRequest {
-                paths: vec![
-                    "sessions/../../plugins/rollout-x.jsonl".to_string(),
-                    "/etc/passwd".to_string(),
-                    "plugins/rollout-x.jsonl".to_string(),
-                ],
-            },
+            &[
+                "sessions/../../plugins/rollout-x.jsonl".to_string(),
+                "/etc/passwd".to_string(),
+                "plugins/rollout-x.jsonl".to_string(),
+            ],
             root,
         );
 

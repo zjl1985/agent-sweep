@@ -1,26 +1,26 @@
-mod cleanup;
-mod discovery;
 mod models;
+mod providers;
 
 use models::{ArchiveRequest, ArchiveResult, DeleteRequest, DeleteResult, ScanResult};
+use providers::ProviderRegistry;
 
 #[tauri::command]
 async fn scan_sessions() -> Result<ScanResult, String> {
-    tauri::async_runtime::spawn_blocking(discovery::scan_all)
+    tauri::async_runtime::spawn_blocking(|| ProviderRegistry::built_in().scan())
         .await
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 async fn delete_sessions(request: DeleteRequest) -> Result<DeleteResult, String> {
-    tauri::async_runtime::spawn_blocking(move || cleanup::delete(request))
+    tauri::async_runtime::spawn_blocking(move || ProviderRegistry::built_in().delete(request))
         .await
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 async fn archive_sessions(request: ArchiveRequest) -> Result<ArchiveResult, String> {
-    tauri::async_runtime::spawn_blocking(move || cleanup::archive(request))
+    tauri::async_runtime::spawn_blocking(move || ProviderRegistry::built_in().archive(request))
         .await
         .map_err(|error| error.to_string())
 }

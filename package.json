@@ -1,8 +1,8 @@
 {
-  "name": "codex-clear",
+  "name": "agent-sweep",
   "private": true,
   "version": "0.1.1",
-  "description": "Local-first desktop app for inspecting and cleaning Codex sessions",
+  "description": "Local-first desktop app for inspecting and cleaning AI agent sessions",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "dist": "tauri build && rm -rf dist/CodexClear.app dist/CodexClear_*_aarch64.dmg && cp -R src-tauri/target/release/bundle/macos/CodexClear.app dist/ && cp src-tauri/target/release/bundle/dmg/CodexClear_*_aarch64.dmg dist/"
+    "dist": "tauri build && rm -rf dist/AgentSweep.app dist/AgentSweep_*_aarch64.dmg && cp -R src-tauri/target/release/bundle/macos/AgentSweep.app dist/ && cp src-tauri/target/release/bundle/dmg/AgentSweep_*_aarch64.dmg dist/"
   },
   "dependencies": {
     "preact": "^10.25.1",

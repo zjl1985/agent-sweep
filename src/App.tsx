@@ -6,7 +6,7 @@ import {
   useState,
 } from "preact/hooks";
 import { archiveSessions, deleteSessions, scanSessions } from "./api";
-import type { DeleteMode, ScanResult, SessionEntry } from "./types";
+import type { DeleteMode, ScanResult, SessionEntry, SessionTarget } from "./types";
 import {
   loadLocale,
   localizeDirName,
@@ -36,9 +36,24 @@ type Theme = "light" | "dark";
 
 const AGE_VALUES: AgeFilter[] = [0, 7, 30, 90];
 
+// Keep the legacy keys so an in-place upgrade retains the user's settings.
 const MODE_STORAGE_KEY = "codex-clear:delete-mode";
 const THEME_STORAGE_KEY = "codex-clear:theme";
 const DAY_MS = 86_400_000;
+
+function selectionKey(session: SessionEntry): string {
+  return JSON.stringify([session.providerId, session.sessionKey]);
+}
+
+function sessionTarget(session: SessionEntry): SessionTarget {
+  return { providerId: session.providerId, sessionKey: session.sessionKey };
+}
+
+function supportsDelete(session: SessionEntry, mode: DeleteMode): boolean {
+  return mode === "trash"
+    ? session.capabilities.deleteTrash
+    : session.capabilities.deletePermanent;
+}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -85,6 +100,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [providerFilter, setProviderFilter] = useState("all");
   const [ageFilter, setAgeFilter] = useState<AgeFilter>(0);
   const [sortBy, setSortBy] = useState<SortKey>("size");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -145,6 +161,9 @@ export default function App() {
     try {
       const result = await scanSessions();
       setScan(result);
+      setProviderFilter((current) =>
+        result.providers.some((provider) => provider.id === current) ? current : "all",
+      );
       setSelected(new Set());
       setActiveIndex(0);
       setNotice(
@@ -169,6 +188,7 @@ export default function App() {
     const keyword = query.trim().toLowerCase();
     const cutoff = ageFilter === 0 ? 0 : Date.now() - ageFilter * DAY_MS;
     return sessions.filter((session) => {
+      if (providerFilter !== "all" && session.providerId !== providerFilter) return false;
       if (statusFilter === "active" && session.archived) return false;
       if (statusFilter === "archived" && !session.archived) return false;
       if (cutoff !== 0 && session.updatedAtMs >= cutoff) return false;
@@ -177,12 +197,13 @@ export default function App() {
         session.title,
         session.workspace ?? "",
         session.sessionId,
+        session.providerName,
       ]
         .join(" ")
         .toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [scan, query, statusFilter, ageFilter]);
+  }, [scan, query, providerFilter, statusFilter, ageFilter]);
 
   const sortedSessions = useMemo(() => {
     const sessions = [...visibleSessions];
@@ -200,7 +221,7 @@ export default function App() {
   );
 
   const selectedSessions = useMemo(
-    () => (scan?.sessions ?? []).filter((s) => selected.has(s.relPath)),
+    () => (scan?.sessions ?? []).filter((s) => selected.has(selectionKey(s))),
     [scan, selected],
   );
   const selectedBytes = selectedSessions.reduce(
@@ -208,39 +229,49 @@ export default function App() {
     0,
   );
 
-  // Only active sessions can be archived; already-archived ones are skipped.
   const archivableSessions = useMemo(
-    () => selectedSessions.filter((s) => !s.archived),
+    () => selectedSessions.filter((s) => !s.archived && s.capabilities.archive),
     [selectedSessions],
   );
+  const canTrash = selectedSessions.length > 0 &&
+    selectedSessions.every((s) => supportsDelete(s, "trash"));
+  const canDeletePermanently = selectedSessions.length > 0 &&
+    selectedSessions.every((s) => supportsDelete(s, "permanent"));
+  const canDelete = canTrash || canDeletePermanently;
+  const canDeleteInDialog = dialogMode === "trash" ? canTrash : canDeletePermanently;
 
   const allFilteredSelected =
     sortedSessions.length > 0 &&
-    sortedSessions.every((session) => selected.has(session.relPath));
+    sortedSessions.every((session) => selected.has(selectionKey(session)));
 
-  const toggleSelected = useCallback((relPath: string) => {
+  const toggleSelected = useCallback((key: string) => {
     setSelected((current) => {
       const next = new Set(current);
-      if (next.has(relPath)) {
-        next.delete(relPath);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(relPath);
+        next.add(key);
       }
       return next;
     });
   }, []);
 
   const selectAllVisible = useCallback(() => {
-    setSelected(new Set(sortedSessions.map((session) => session.relPath)));
+    setSelected(new Set(sortedSessions.map(selectionKey)));
   }, [sortedSessions]);
 
   const clearSelection = useCallback(() => setSelected(new Set()), []);
 
   const openConfirm = useCallback(() => {
-    setDialogMode(defaultMode);
+    if (!canDelete || deleting || archiving) return;
+    setDialogMode(
+      defaultMode === "trash"
+        ? canTrash ? "trash" : "permanent"
+        : canDeletePermanently ? "permanent" : "trash",
+    );
     setConfirmOpen(true);
     confirmRef.current?.showModal();
-  }, [defaultMode]);
+  }, [defaultMode, canDelete, canTrash, canDeletePermanently, deleting, archiving]);
 
   const closeConfirm = useCallback(() => {
     setConfirmOpen(false);
@@ -263,12 +294,15 @@ export default function App() {
   }, []);
 
   const performDelete = useCallback(async () => {
+    if (!canDeleteInDialog || deleting || archiving) return;
     setDeleting(true);
     try {
       const result = await deleteSessions({
-        paths: [...selected],
+        targets: selectedSessions.map(sessionTarget),
         mode: dialogMode,
       });
+      closeConfirm();
+      await doScan();
       const summary = strings[locale].deletedNotice(
         result.deletedCount,
         formatSize(result.freedBytes),
@@ -284,21 +318,21 @@ export default function App() {
       } else {
         setNotice(summary);
       }
-      closeConfirm();
-      await doScan();
     } catch (cause) {
       setError(String(cause));
     } finally {
       setDeleting(false);
     }
-  }, [selected, dialogMode, closeConfirm, doScan, locale]);
+  }, [selectedSessions, canDeleteInDialog, deleting, archiving, dialogMode, closeConfirm, doScan, locale]);
 
   const performArchive = useCallback(async () => {
+    if (archivableSessions.length === 0 || archiving || deleting) return;
     setArchiving(true);
     try {
       const result = await archiveSessions({
-        paths: archivableSessions.map((session) => session.relPath),
+        targets: archivableSessions.map(sessionTarget),
       });
+      await doScan();
       const summary = strings[locale].archivedNotice(result.archivedCount);
       if (result.failed.length > 0) {
         setError(
@@ -311,13 +345,12 @@ export default function App() {
       } else {
         setNotice(summary);
       }
-      await doScan();
     } catch (cause) {
       setError(String(cause));
     } finally {
       setArchiving(false);
     }
-  }, [archivableSessions, doScan, locale]);
+  }, [archivableSessions, archiving, deleting, doScan, locale]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -360,7 +393,7 @@ export default function App() {
         const session = sortedSessions[activeIndex];
         if (session) {
           event.preventDefault();
-          toggleSelected(session.relPath);
+          toggleSelected(selectionKey(session));
         }
       }
     };
@@ -398,7 +431,7 @@ export default function App() {
     <div class="app-shell">
       <header class="app-header">
         <div class="brand">
-          <h1 class="brand-title">CodexClear</h1>
+          <h1 class="brand-title">AgentSweep</h1>
           <p class="brand-sub">{t.brandSubtitle}</p>
         </div>
         <div class="header-actions">
@@ -484,10 +517,23 @@ export default function App() {
           </span>
         </div>
         <div class="stat">
-          <span class="stat-value">{formatSize(scan?.codexTotalBytes ?? 0)}</span>
-          <span class="stat-label">{t.codexTotal}</span>
+          <span class="stat-value">{formatSize(scan?.totalBytes ?? 0)}</span>
+          <span class="stat-label">{t.allProvidersTotal}</span>
         </div>
       </section>
+
+      {scan && scan.providers.length > 0 && (
+        <section class="overview-row" aria-label={t.providerFilterLabel}>
+          <DatabaseIcon size={14} />
+          <div class="overview-chips">
+            {scan.providers.map((provider) => (
+              <span class="overview-chip" title={provider.rootLabel} key={provider.id}>
+                {provider.name} · {provider.sessionCount} · {formatSize(provider.totalBytes)}
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
 
       {scan && scan.otherDirs.length > 0 && (
         <section class="overview-row" aria-label={t.otherUsageLabel}>
@@ -495,7 +541,8 @@ export default function App() {
           <span class="overview-title">{t.otherUsage}</span>
           <div class="overview-chips">
             {scan.otherDirs.map((dir) => (
-              <span class="overview-chip" title={dir.note}>
+              <span class="overview-chip" title={`${dir.providerName}: ${dir.note}`}>
+                {(scan.providers.length > 1 ? `${dir.providerName} · ` : "")}
                 {localizeDirName(dir.name, locale)}{" "}
                 {formatSize(dir.sizeBytes)}
               </span>
@@ -516,6 +563,19 @@ export default function App() {
             aria-label={t.searchLabel}
           />
         </div>
+        {scan && scan.providers.length > 1 && (
+          <select
+            class="select"
+            value={providerFilter}
+            onChange={(event) => setProviderFilter(event.currentTarget.value)}
+            aria-label={t.providerFilterLabel}
+          >
+            <option value="all">{t.allProviders}</option>
+            {scan.providers.map((provider) => (
+              <option key={provider.id} value={provider.id}>{provider.name}</option>
+            ))}
+          </select>
+        )}
         <div class="chip-group" role="group" aria-label={t.statusFilterLabel}>
           {(
             [
@@ -588,14 +648,14 @@ export default function App() {
         )}
         {sortedSessions.map((session, index) => (
           <SessionRow
-            key={session.relPath}
+            key={selectionKey(session)}
             session={session}
             index={index}
             active={index === activeIndex}
-            checked={selected.has(session.relPath)}
+            checked={selected.has(selectionKey(session))}
             maxBytes={maxBytes}
             locale={locale}
-            onToggle={() => toggleSelected(session.relPath)}
+            onToggle={() => toggleSelected(selectionKey(session))}
           />
         ))}
       </div>
@@ -612,17 +672,19 @@ export default function App() {
           <span class="selection-summary">
             {t.selectedSummary(selected.size, formatSize(selectedBytes))}
           </span>
-          <button
-            class="ghost-button"
-            onClick={() => void performArchive()}
-            disabled={archiving || deleting || archivableSessions.length === 0}
-          >
-            <ArchiveIcon /> {t.archiveSelected}
-          </button>
+          {selectedSessions.some((session) => session.capabilities.archive) && (
+            <button
+              class="ghost-button"
+              onClick={() => void performArchive()}
+              disabled={archiving || deleting || archivableSessions.length === 0}
+            >
+              <ArchiveIcon /> {t.archiveSelected}
+            </button>
+          )}
           <button
             class="danger-button"
             onClick={openConfirm}
-            disabled={deleting}
+            disabled={deleting || archiving || !canDelete}
           >
             <TrashIcon /> {t.deleteSelected}
           </button>
@@ -648,6 +710,7 @@ export default function App() {
             <input
               type="radio"
               name="confirm-mode"
+              disabled={!canTrash}
               checked={dialogMode === "trash"}
               onChange={() => setDialogMode("trash")}
             />
@@ -657,6 +720,7 @@ export default function App() {
             <input
               type="radio"
               name="confirm-mode"
+              disabled={!canDeletePermanently}
               checked={dialogMode === "permanent"}
               onChange={() => setDialogMode("permanent")}
             />
@@ -670,7 +734,7 @@ export default function App() {
           <button
             class={dialogMode === "permanent" ? "danger-button" : "primary-button"}
             onClick={() => void performDelete()}
-            disabled={deleting}
+            disabled={deleting || archiving || !canDeleteInDialog}
           >
             {deleting
               ? t.working
@@ -778,6 +842,7 @@ function SessionRow({
               <FolderIcon size={11} /> {session.workspace}
             </span>
           )}
+          <span class="row-id">{session.providerName}</span>
           <span class="row-id">{session.sessionId.slice(0, 8)}…</span>
         </div>
       </div>

@@ -10,7 +10,7 @@ import type {
 function assertDesktopRuntime() {
   if (!("__TAURI_INTERNALS__" in window)) {
     throw new Error(
-      "Local backend unavailable. Open this app through the CodexClear desktop app, not a browser.",
+      "Local backend unavailable. Open this app through the AgentSweep desktop app, not a browser.",
     );
   }
 }

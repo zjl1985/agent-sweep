@@ -1,4 +1,25 @@
+export interface ProviderCapabilities {
+  archive: boolean;
+  deleteTrash: boolean;
+  deletePermanent: boolean;
+}
+
+export interface ProviderSummary {
+  id: string;
+  name: string;
+  rootLabel: string;
+  totalBytes: number;
+  sessionCount: number;
+  capabilities: ProviderCapabilities;
+  issues: string[];
+}
+
 export interface SessionEntry {
+  providerId: string;
+  providerName: string;
+  /** Opaque identifier interpreted only by the owning provider. */
+  sessionKey: string;
+  capabilities: ProviderCapabilities;
   sessionId: string;
   title: string;
   workspace: string | null;
@@ -7,11 +28,11 @@ export interface SessionEntry {
   sizeBytes: number;
   archived: boolean;
   fileName: string;
-  /** Path relative to the Codex home; unique per file (session ids are not). */
-  relPath: string;
 }
 
 export interface DirUsage {
+  providerId: string;
+  providerName: string;
   name: string;
   sizeBytes: number;
   note: string;
@@ -19,40 +40,45 @@ export interface DirUsage {
 
 export interface ScanResult {
   sessions: SessionEntry[];
+  providers: ProviderSummary[];
   activeCount: number;
   archivedCount: number;
   activeBytes: number;
   archivedBytes: number;
   sessionsBytes: number;
-  codexTotalBytes: number;
+  totalBytes: number;
   otherDirs: DirUsage[];
   issues: string[];
   scannedAtMs: number;
 }
 
+export interface SessionTarget {
+  providerId: string;
+  sessionKey: string;
+}
+
 export type DeleteMode = "trash" | "permanent";
 
 export interface DeleteRequest {
-  paths: string[];
+  targets: SessionTarget[];
   mode: DeleteMode;
 }
 
 export interface ArchiveRequest {
-  paths: string[];
+  targets: SessionTarget[];
 }
 
-export interface DeleteFailure {
-  path: string;
+export interface OperationFailure extends SessionTarget {
   message: string;
 }
 
 export interface DeleteResult {
   deletedCount: number;
   freedBytes: number;
-  failed: DeleteFailure[];
+  failed: OperationFailure[];
 }
 
 export interface ArchiveResult {
   archivedCount: number;
-  failed: DeleteFailure[];
+  failed: OperationFailure[];
 }

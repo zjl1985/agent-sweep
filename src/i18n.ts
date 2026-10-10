@@ -13,11 +13,13 @@ export interface Strings {
   totalSize: (count: number) => string;
   activeLabel: (size: string) => string;
   archivedLabel: (size: string) => string;
-  codexTotal: string;
+  allProvidersTotal: string;
   otherUsage: string;
   otherUsageLabel: string;
   searchPlaceholder: string;
   searchLabel: string;
+  providerFilterLabel: string;
+  allProviders: string;
   statusFilterLabel: string;
   chipAll: (count: number) => string;
   chipActive: (count: number) => string;
@@ -64,7 +66,7 @@ export interface Strings {
 }
 
 const en: Strings = {
-  brandSubtitle: "Inspect and clean local ChatGPT / Codex session storage",
+  brandSubtitle: "Inspect and clean local coding-agent sessions",
   settings: "Settings",
   settingsTitle: "Settings",
   settingsAria: "Settings (⌘,)",
@@ -76,11 +78,13 @@ const en: Strings = {
   totalSize: (count) => `Total session size (${count})`,
   activeLabel: (size) => `Active · ${size}`,
   archivedLabel: (size) => `Archived · ${size}`,
-  codexTotal: "~/.codex total",
+  allProvidersTotal: "All providers total",
   otherUsage: "Other usage",
   otherUsageLabel: "Other disk usage (read-only)",
-  searchPlaceholder: "Search title, directory, or session id (⌘K)",
+  searchPlaceholder: "Search title, directory, session id, or provider (⌘K)",
   searchLabel: "Search sessions",
+  providerFilterLabel: "Provider filter",
+  allProviders: "All providers",
   statusFilterLabel: "Status filter",
   chipAll: (count) => `All ${count}`,
   chipActive: (count) => `Active ${count}`,
@@ -96,7 +100,7 @@ const en: Strings = {
   toolbarLabel: "Filters and sorting",
   selectAll: (count) => `Select all (${count})`,
   listLabel: "Session list",
-  emptyScanning: "Scanning ~/.codex/sessions…",
+  emptyScanning: "Scanning agent session stores…",
   emptyNoMatch:
     "No sessions match the current filters. Adjust the filters or rescan.",
   badgeArchived: "Archived",
@@ -130,7 +134,7 @@ const en: Strings = {
 };
 
 const zh: Strings = {
-  brandSubtitle: "统计与管理本机 ChatGPT / Codex 会话占用",
+  brandSubtitle: "统计与清理本机 Coding Agent 会话",
   settings: "设置",
   settingsTitle: "设置",
   settingsAria: "设置 (⌘,)",
@@ -142,11 +146,13 @@ const zh: Strings = {
   totalSize: (count) => `会话总大小（${count} 个）`,
   activeLabel: (size) => `活跃 · ${size}`,
   archivedLabel: (size) => `已归档 · ${size}`,
-  codexTotal: "~/.codex 总占用",
+  allProvidersTotal: "全部 Provider 总占用",
   otherUsage: "其他占用",
   otherUsageLabel: "其他目录占用（只读）",
-  searchPlaceholder: "搜索标题、目录或会话 ID（⌘K）",
+  searchPlaceholder: "搜索标题、目录、会话 ID 或 Provider（⌘K）",
   searchLabel: "搜索会话",
+  providerFilterLabel: "Provider 筛选",
+  allProviders: "全部 Provider",
   statusFilterLabel: "状态筛选",
   chipAll: (count) => `全部 ${count}`,
   chipActive: (count) => `活跃 ${count}`,
@@ -162,7 +168,7 @@ const zh: Strings = {
   toolbarLabel: "筛选与排序",
   selectAll: (count) => `全选（${count}）`,
   listLabel: "会话列表",
-  emptyScanning: "正在扫描 ~/.codex/sessions …",
+  emptyScanning: "正在扫描 Agent 会话存储…",
   emptyNoMatch: "没有符合条件的会话。调整筛选条件或重新扫描。",
   badgeArchived: "归档",
   selectRow: (title) => `选择 ${title}`,
@@ -195,6 +201,7 @@ const zh: Strings = {
 
 export const strings: Record<Locale, Strings> = { en, zh };
 
+// Keep the legacy key so an in-place upgrade retains the user's locale.
 const LOCALE_KEY = "codex-clear:locale";
 
 export function loadLocale(): Locale {
@@ -217,6 +224,10 @@ const zhMessagePrefixes: [string, string][] = [
     "No sessions/ or archived_sessions/ directory found",
     "未找到 sessions/ 或 archived_sessions/ 目录",
   ],
+  ["Unknown session provider", "未知的会话 Provider"],
+  ["Provider does not support archiving", "该 Provider 不支持归档"],
+  ["Provider does not support moving sessions to trash", "该 Provider 不支持移到废纸篓"],
+  ["Provider does not support permanent deletion", "该 Provider 不支持永久删除"],
   ["Invalid session path", "无效的会话路径"],
   [
     "Only rollout-*.jsonl session files can be deleted",
@@ -248,6 +259,11 @@ const zhMessagePrefixes: [string, string][] = [
 
 export function localizeMessage(message: string, locale: Locale): string {
   if (locale === "en") return message;
+  // Registry scan issues retain their provider name before the canonical message.
+  const providerIssue = message.match(/^([^:]+): (.+)$/);
+  if (providerIssue && zhMessagePrefixes.some(([prefix]) => providerIssue[2].startsWith(prefix))) {
+    return `${providerIssue[1]}: ${localizeMessage(providerIssue[2], locale)}`;
+  }
   for (const [prefix, translation] of zhMessagePrefixes) {
     if (message.startsWith(prefix)) {
       return translation + message.slice(prefix.length);

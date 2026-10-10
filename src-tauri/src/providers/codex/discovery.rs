@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 use walkdir::WalkDir;
 
-use crate::models::{DirUsage, ScanResult, SessionEntry};
+use crate::models::{DirUsage, ProviderCapabilities, ProviderScan, SessionEntry};
+
+use super::{CODEX_PROVIDER_ID, CODEX_PROVIDER_NAME};
 
 /// Byte budget for a single metadata line so abnormally huge lines cannot
 /// stall the scan (same approach as baton).
@@ -16,26 +18,8 @@ const MAX_METADATA_LINES: usize = 8;
 /// Maximum number of entries read from session_index.jsonl.
 const MAX_INDEX_ENTRIES: usize = 10_000;
 
-pub fn codex_home() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".codex"))
-}
-
-pub fn scan_all() -> ScanResult {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    match codex_home() {
-        Some(home) => scan_codex_at(&home, now_ms),
-        None => {
-            let mut result = ScanResult::empty(now_ms);
-            result
-                .issues
-                .push("Could not locate the user home directory".to_string());
-            result
-        }
-    }
-}
-
-pub fn scan_codex_at(root: &Path, now_ms: i64) -> ScanResult {
-    let mut result = ScanResult::empty(now_ms);
+pub(super) fn scan_codex_at(root: &Path) -> ProviderScan {
+    let mut result = ProviderScan::empty();
     let titles = load_title_index(&root.join("session_index.jsonl"));
     let mut sessions: Vec<SessionEntry> = Vec::new();
 
@@ -43,15 +27,23 @@ pub fn scan_codex_at(root: &Path, now_ms: i64) -> ScanResult {
     if sessions_root.is_dir() {
         collect_rollout_files(&sessions_root, 4, false, "sessions", &titles, &mut sessions);
     } else {
-        result
-            .issues
-            .push(format!("Sessions directory not found: {}", sessions_root.display()));
+        result.issues.push(format!(
+            "Sessions directory not found: {}",
+            sessions_root.display()
+        ));
     }
 
     // A missing archive directory is normal, not an issue.
     let archived_root = root.join("archived_sessions");
     if archived_root.is_dir() {
-        collect_rollout_files(&archived_root, 1, true, "archived_sessions", &titles, &mut sessions);
+        collect_rollout_files(
+            &archived_root,
+            1,
+            true,
+            "archived_sessions",
+            &titles,
+            &mut sessions,
+        );
     }
 
     for session in &sessions {
@@ -64,7 +56,7 @@ pub fn scan_codex_at(root: &Path, now_ms: i64) -> ScanResult {
         }
     }
     result.sessions_bytes = result.active_bytes + result.archived_bytes;
-    result.codex_total_bytes = dir_size(root);
+    result.total_bytes = dir_size(root);
     result.other_dirs = scan_overview(root);
     sessions.sort_by(|a, b| {
         b.size_bytes
@@ -126,6 +118,14 @@ fn collect_rollout_files(
             Err(_) => name.to_string(),
         };
         out.push(SessionEntry {
+            provider_id: CODEX_PROVIDER_ID.to_string(),
+            provider_name: CODEX_PROVIDER_NAME.to_string(),
+            session_key: rel_path,
+            capabilities: ProviderCapabilities {
+                archive: !archived,
+                delete_trash: true,
+                delete_permanent: true,
+            },
             session_id,
             title,
             workspace,
@@ -134,7 +134,6 @@ fn collect_rollout_files(
             size_bytes: metadata.len(),
             archived,
             file_name: name.to_string(),
-            rel_path,
         });
     }
 }
@@ -205,10 +204,7 @@ fn next_bounded_line(reader: &mut impl Read, cap: usize) -> Option<String> {
                 String::from_utf8(buf).ok()
             };
         }
-        if let Some(pos) = chunk[..read]
-            .iter()
-            .position(|&byte| byte == b'\n')
-        {
+        if let Some(pos) = chunk[..read].iter().position(|&byte| byte == b'\n') {
             buf.extend_from_slice(&chunk[..pos]);
             return String::from_utf8(buf).ok();
         }
@@ -239,8 +235,7 @@ fn created_ms_from_file_name(name: &str) -> Option<i64> {
     if stem.len() < 19 {
         return None;
     }
-    let naive =
-        chrono::NaiveDateTime::parse_from_str(&stem[..19], "%Y-%m-%dT%H-%M-%S").ok()?;
+    let naive = chrono::NaiveDateTime::parse_from_str(&stem[..19], "%Y-%m-%dT%H-%M-%S").ok()?;
     chrono::Local
         .from_local_datetime(&naive)
         .single()
@@ -254,9 +249,7 @@ fn parse_iso_ms(value: &str) -> Option<i64> {
 }
 
 fn fallback_title(workspace: &Option<String>, created_at_ms: Option<i64>) -> String {
-    let date = created_at_ms
-        .map(format_short_date)
-        .unwrap_or_default();
+    let date = created_at_ms.map(format_short_date).unwrap_or_default();
     let directory = workspace
         .as_deref()
         .map(Path::new)
@@ -308,15 +301,13 @@ fn load_title_index(path: &Path) -> HashMap<String, String> {
 
 fn scan_overview(codex_root: &Path) -> Vec<DirUsage> {
     let mut dirs = Vec::new();
-    let logs_bytes = [
-        "logs_2.sqlite",
-        "logs_2.sqlite-wal",
-        "logs_2.sqlite-shm",
-    ]
-    .iter()
-    .map(|file| file_size(&codex_root.join(file)))
-    .sum();
+    let logs_bytes = ["logs_2.sqlite", "logs_2.sqlite-wal", "logs_2.sqlite-shm"]
+        .iter()
+        .map(|file| file_size(&codex_root.join(file)))
+        .sum();
     dirs.push(DirUsage {
+        provider_id: CODEX_PROVIDER_ID.to_string(),
+        provider_name: CODEX_PROVIDER_NAME.to_string(),
         name: "Log database".to_string(),
         size_bytes: logs_bytes,
         note: "logs_2.sqlite".to_string(),
@@ -330,6 +321,8 @@ fn scan_overview(codex_root: &Path) -> Vec<DirUsage> {
     ];
     for (directory, name) in read_only {
         dirs.push(DirUsage {
+            provider_id: CODEX_PROVIDER_ID.to_string(),
+            provider_name: CODEX_PROVIDER_NAME.to_string(),
             name: name.to_string(),
             size_bytes: dir_size(&codex_root.join(directory)),
             note: format!("{directory}/ (read-only)"),
@@ -396,9 +389,11 @@ mod tests {
         let meta_line = r#"{"timestamp":"2026-08-15T02:54:49.001Z","type":"session_meta","payload":{"session_id":"01a00357-efb0-7db0-8d4f-272a55f4431c","cwd":"/Users/zero/code/baton"}}"#;
         write_file(
             &path,
-            &format!("{meta_line}
+            &format!(
+                "{meta_line}
 {{\"type\":\"event_msg\"}}
-"),
+"
+            ),
         );
         let meta = read_session_meta(&path).unwrap();
         assert_eq!(
@@ -413,8 +408,11 @@ mod tests {
     fn read_session_meta_tolerates_missing_meta() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rollout-y.jsonl");
-        write_file(&path, "{\"type\":\"event_msg\"}
-");
+        write_file(
+            &path,
+            "{\"type\":\"event_msg\"}
+",
+        );
         assert!(read_session_meta(&path).is_none());
     }
 
@@ -444,18 +442,23 @@ mod tests {
         );
         write_file(
             &root.join("sessions/2026/08/16").join(name_b),
-            &format!("{meta_b}
-"),
+            &format!(
+                "{meta_b}
+"
+            ),
         );
-        write_file(&root.join("archived_sessions").join(name_c), "junk
-");
+        write_file(
+            &root.join("archived_sessions").join(name_c),
+            "junk
+",
+        );
         write_file(
             &root.join("session_index.jsonl"),
             "{\"id\":\"01a007f4-86f8-7903-b3f3-201554f50580\",\"thread_name\":\"Fix login bug\"}
 ",
         );
 
-        let result = scan_codex_at(root, 0);
+        let result = scan_codex_at(root);
         assert!(result.issues.is_empty());
         assert_eq!(result.sessions.len(), 3);
         assert_eq!(result.active_count, 2);
@@ -484,9 +487,9 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_session_ids_still_yield_unique_rel_paths() {
+    fn duplicate_session_ids_still_yield_unique_session_keys() {
         // Resumed sessions can write several rollout files that share one
-        // session_meta id; selection and deletion key off rel_path instead.
+        // session_meta id; selection and deletion key off session_key instead.
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let meta = r#"{"timestamp":"2026-07-11T01:24:00.000Z","type":"session_meta","payload":{"session_id":"019f4ec3-0000-7000-8000-000000000000","cwd":"/Users/zero/code/agent-hub"}}"#;
@@ -499,32 +502,35 @@ mod tests {
             &format!("{meta}\n"),
         );
 
-        let result = scan_codex_at(root, 0);
+        let result = scan_codex_at(root);
         assert_eq!(result.sessions.len(), 2);
         assert!(result
             .sessions
             .iter()
             .all(|s| s.session_id == "019f4ec3-0000-7000-8000-000000000000"));
-        let rel_paths: Vec<&str> = result
+        let session_keys: Vec<&str> = result
             .sessions
             .iter()
-            .map(|s| s.rel_path.as_str())
+            .map(|s| s.session_key.as_str())
             .collect();
-        assert!(rel_paths.contains(&"sessions/2026/07/11/rollout-2026-07-11T09-24-00-019f4ec3-0000-7000-8000-000000000000.jsonl"));
-        assert!(rel_paths.contains(&"archived_sessions/rollout-2026-07-11T09-34-00-019faaaa-0000-7000-8000-000000000000.jsonl"));
+        assert!(session_keys.contains(&"sessions/2026/07/11/rollout-2026-07-11T09-24-00-019f4ec3-0000-7000-8000-000000000000.jsonl"));
+        assert!(session_keys.contains(&"archived_sessions/rollout-2026-07-11T09-34-00-019faaaa-0000-7000-8000-000000000000.jsonl"));
     }
 
     #[test]
     #[ignore = "Manual diagnostic: run on a machine with real Codex data"]
     fn scan_real_codex_home() {
-        let result = scan_all();
+        use crate::providers::{codex::CodexProvider, SessionProvider};
+
+        let provider = CodexProvider::new();
+        let result = provider.scan(0);
         println!(
             "sessions={} active={} archived={} bytes={} codex_total={} issues={:?}",
             result.sessions.len(),
             result.active_count,
             result.archived_count,
             result.sessions_bytes,
-            result.codex_total_bytes,
+            result.total_bytes,
             result.issues
         );
         for session in result.sessions.iter().take(5) {
@@ -542,10 +548,31 @@ mod tests {
     #[test]
     fn scan_codex_at_reports_missing_sessions_dir() {
         let dir = tempfile::tempdir().unwrap();
-        let result = scan_codex_at(dir.path(), 0);
+        let result = scan_codex_at(dir.path());
         assert_eq!(result.sessions.len(), 0);
         assert_eq!(result.issues.len(), 1);
         assert!(result.issues[0].contains("Sessions directory not found"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scan_skips_file_and_nested_directory_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write_file(&root.join("sessions/rollout-real.jsonl"), "real");
+        write_file(&outside.path().join("rollout-external.jsonl"), "precious");
+        std::os::unix::fs::symlink(
+            outside.path().join("rollout-external.jsonl"),
+            root.join("sessions/rollout-link.jsonl"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.join("sessions/escape")).unwrap();
+        let scan = scan_codex_at(root);
+        assert_eq!(scan.sessions.len(), 1);
+        assert_eq!(scan.sessions[0].session_key, "sessions/rollout-real.jsonl");
+        assert_eq!(scan.sessions_bytes, 4);
+        assert_eq!(scan.total_bytes, 4);
     }
 
     #[test]
@@ -559,10 +586,7 @@ mod tests {
         let logs = &overview[0];
         assert_eq!(logs.name, "Log database");
         assert_eq!(logs.size_bytes, 6);
-        let cache = overview
-            .iter()
-            .find(|entry| entry.name == "Cache")
-            .unwrap();
+        let cache = overview.iter().find(|entry| entry.name == "Cache").unwrap();
         assert_eq!(cache.size_bytes, 6);
     }
 }

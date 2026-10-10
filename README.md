@@ -1,46 +1,57 @@
-# CodexClear
+# AgentSweep
 
-A local-first desktop app for inspecting and cleaning the local session storage shared by the **ChatGPT app**, the **Codex desktop app**, and the **[Codex CLI](https://developers.openai.com/codex/)** — all three keep their chat/session rollout files under `~/.codex`. Built with Tauri 2 (Rust backend + Preact frontend), following the architecture conventions of the baton handoff app: all file system work lives in Rust, the web layer is presentation only.
+A local-first desktop app for inspecting and safely cleaning AI coding-agent sessions. Agent-specific storage formats and operations live behind provider adapters; the first supported provider is Codex (`~/.codex`). Built with Tauri 2 (Rust backend + Preact frontend), with all filesystem access confined to Rust.
 
 <p align="center">
-  <img src="docs/screenshot-light.png#gh-light-mode-only" alt="CodexClear — light theme" width="820">
-  <img src="docs/screenshot-dark.png#gh-dark-mode-only" alt="CodexClear — dark theme" width="820">
+  <img src="docs/screenshot-light.png#gh-light-mode-only" alt="AgentSweep — light theme" width="820">
+  <img src="docs/screenshot-dark.png#gh-dark-mode-only" alt="AgentSweep — dark theme" width="820">
 </p>
 
 > The screenshots show synthetic demo data, not real sessions.
 
 ## Features
 
-- **Bilingual UI** — English by default with an in-app toggle for Chinese; the choice is remembered locally
-- **Light & dark themes** — follows the system appearance until you pick one with the header toggle; the choice is remembered locally
-- **Storage stats** — total size of all Codex sessions, split by active vs. archived, plus the overall `~/.codex` footprint
-- **Per-session sizes, sorted** — every `rollout-*.jsonl` under `sessions/YYYY/MM/DD/` and `archived_sessions/`, sorted by size (or updated time), with a relative size bar, title, working directory, and timestamps
-- **Filters** — keyword search (title / directory / session id), active/archived, older-than-7/30/90-days, and "select all filtered" for bulk operations
-- **Safe cleanup** — delete selected sessions to the system Trash (default) or permanently, after an explicit confirmation
-- **Read-only overview** — other large `~/.codex` entries (log database, plugins, generated images, …) are shown for context but never touched
+- **Provider adapters** — a registry discovers agent stores and normalizes sessions without leaking provider-specific paths into shared orchestration
+- **Bilingual UI** — English and Chinese, remembered locally
+- **Light & dark themes** — follows the system appearance until overridden
+- **Storage stats** — aggregate session usage plus per-provider totals
+- **Per-session sizes** — sortable by size or update time, with title, workspace, provider, and status
+- **Filters and bulk selection** — search, active/archived, age, and select-all-filtered
+- **Capability-aware operations** — Archive and Delete are only enabled when the owning provider supports them
+- **Safe cleanup** — Trash by default or permanent deletion after explicit confirmation
+
+## Supported providers
+
+| Provider | Discover | Archive | Trash | Permanent delete |
+| --- | --- | --- | --- | --- |
+| Codex | Yes | Yes | Yes | Yes |
+
+Codex covers the session storage shared by the ChatGPT app, Codex desktop app, and [Codex CLI](https://developers.openai.com/codex/). Additional agents can be added as isolated adapters without changing shared UI/API semantics.
 
 ## Safety design
 
-- The scanner only stats files and reads a bounded number of leading lines (512 KB per line cap) to extract `session_meta`; file bodies are never loaded
-- The frontend only exchanges paths relative to `~/.codex` (e.g. `sessions/2026/08/15/rollout-….jsonl`) — a session id is not unique per file, so selection and deletion key off the relative path; absolute paths never leave the Rust side
-- Every deletion is validated: the file name must match `rollout-*.jsonl`, the target must be a regular file (symbolic links are rejected), and the canonicalized path must stay inside `sessions/` or `archived_sessions/`
-- After deletion, empty `YYYY/MM/DD` directories are pruned bottom-up; the roots themselves are never removed
-- Deleting only removes rollout files; Codex index files (`session_index.jsonl`, `history.jsonl`) are left untouched
+- The frontend identifies targets by opaque `providerId + sessionKey` pairs; absolute paths never leave Rust
+- Each adapter independently validates its allowed roots, file types, canonical paths, and symlink policy
+- Unsupported capabilities are rejected by the backend even if a client submits the command directly
+- The Codex scanner only reads a bounded number of leading JSONL lines (512 KB per line cap)
+- Codex deletion only accepts regular `rollout-*.jsonl` files inside `sessions/` or `archived_sessions/`; index and history files are never modified
+- Empty Codex date directories are pruned after cleanup, but storage roots are retained
 
 ## Architecture
 
-```
-codex_clear/
-├── src/                     # Preact UI (display + filtering only)
-│   ├── App.tsx              # single-page UI
-│   ├── api.ts               # Tauri invoke wrappers
-│   ├── types.ts             # mirrors of the Rust models
+```text
+agent-sweep/
+├── src/                         # Preact UI
+│   ├── App.tsx                  # display, filtering, capability-aware actions
+│   ├── api.ts                   # Tauri invoke wrappers
+│   ├── types.ts                 # mirrors of shared Rust models
 │   └── components/Icons.tsx
 └── src-tauri/src/
-    ├── lib.rs               # 2 tauri commands (scan_sessions, delete_sessions)
-    ├── models.rs            # serde models shared with the frontend
-    ├── discovery.rs         # session scanning + size stats + usage overview
-    └── cleanup.rs           # id resolution, validation, trash/permanent delete
+    ├── lib.rs                   # Tauri commands routed through the registry
+    ├── models.rs                # provider-neutral serde models
+    └── providers/
+        ├── mod.rs               # SessionProvider trait + registry/orchestration
+        └── codex/               # Codex discovery, validation, archive, and delete
 ```
 
 ## Development
@@ -49,28 +60,29 @@ Prerequisites: [Rust](https://rustup.rs/), Node.js, and [pnpm](https://pnpm.io/)
 
 ```sh
 pnpm install
-pnpm tauri dev      # run the desktop app in dev mode
+pnpm tauri dev
 ```
 
-Note: `tauri dev` runs an unbundled binary on macOS, so the Dock shows a generic icon during development. The app icon appears in the bundled `.app` produced by a release build.
+Validation and release builds:
 
 ```sh
-pnpm check                    # TypeScript type check
-cargo test --manifest-path src-tauri/Cargo.toml   # Rust unit tests
-pnpm tauri build --bundles app   # build the release .app
+pnpm check
+cargo test --manifest-path src-tauri/Cargo.toml
+pnpm tauri build --bundles app
 ```
 
-A manual diagnostic test runs the scanner against your real `~/.codex`:
+On macOS, `tauri dev` uses an unbundled binary with a generic Dock icon. The release `.app` contains the configured icon.
 
-```sh
-cargo test --manifest-path src-tauri/Cargo.toml --lib scan_real -- --ignored --nocapture
-```
+## Adding a provider
+
+Implement the Rust `SessionProvider` contract, declare capabilities, and register the adapter. Start new providers as discovery-only; enable destructive operations only after adding provider-specific path, file-type, and symlink tests.
 
 ## Known limitations
 
-- Orphaned entries in `session_index.jsonl` / `history.jsonl` are not cleaned up after deletion (they are tiny, and writing Codex-owned files is deliberately out of scope)
-- Session titles come from `session_index.jsonl`; sessions without an index entry fall back to "directory · date"
-- The `~/.codex` overview list is a fixed set of well-known directories
+- Only the Codex adapter is included today
+- Codex index/history orphan entries are intentionally left untouched after rollout deletion
+- Codex titles depend on `session_index.jsonl`; missing entries fall back to workspace and date
+- Provider roots are detected from conventional locations and are not yet configurable
 
 ## License
 
