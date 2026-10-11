@@ -1,8 +1,6 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use walkdir::WalkDir;
-
 use crate::models::{ArchiveResult, DeleteMode, DeleteResult, OperationFailure};
 
 use super::KIMI_PROVIDER_ID;
@@ -51,11 +49,7 @@ pub(super) fn archive_at(session_keys: &[String], root: &Path) -> ArchiveResult 
     result
 }
 
-pub(super) fn delete_at(
-    session_keys: &[String],
-    mode: DeleteMode,
-    root: &Path,
-) -> DeleteResult {
+pub(super) fn delete_at(session_keys: &[String], mode: DeleteMode, root: &Path) -> DeleteResult {
     let mut result = DeleteResult {
         deleted_count: 0,
         freed_bytes: 0,
@@ -77,16 +71,18 @@ pub(super) fn delete_at(
         let validated = resolve_session_dir(key, root, &allowed);
         match validated {
             Ok(session_dir) => {
-                let size = dir_size(&session_dir);
-                match remove_dir(&session_dir, mode) {
-                    Ok(()) => {
+                match super::super::files::remove_group(root, &[session_dir.clone()], mode) {
+                    Ok(size) => {
                         result.deleted_count += 1;
                         result.freed_bytes += size;
                         if let Some(parent) = session_dir.parent() {
                             prune_empty_parents(parent, &sessions_root);
                         }
                     }
-                    Err(error) => result.failed.push(failure(key.clone(), error.to_string())),
+                    Err((bytes, error)) => {
+                        result.freed_bytes += bytes;
+                        result.failed.push(failure(key.clone(), error));
+                    }
                 }
             }
             Err(message) => result.failed.push(failure(key.clone(), message)),
@@ -95,11 +91,7 @@ pub(super) fn delete_at(
     result
 }
 
-fn resolve_session_dir(
-    rel: &str,
-    root: &Path,
-    allowed: &Path,
-) -> Result<PathBuf, String> {
+fn resolve_session_dir(rel: &str, root: &Path, allowed: &Path) -> Result<PathBuf, String> {
     let path = Path::new(rel);
     if rel.is_empty() || path.is_absolute() {
         return Err("Invalid session path".to_string());
@@ -117,14 +109,8 @@ fn resolve_session_dir(
     if components.len() < 3 {
         return Err("Invalid session path".to_string());
     }
-    let wd = components[1]
-        .as_os_str()
-        .to_str()
-        .unwrap_or("");
-    let session = components[2]
-        .as_os_str()
-        .to_str()
-        .unwrap_or("");
+    let wd = components[1].as_os_str().to_str().unwrap_or("");
+    let session = components[2].as_os_str().to_str().unwrap_or("");
     if !wd.starts_with("wd_") || !session.starts_with("session_") {
         return Err("Invalid Kimi session directory layout".to_string());
     }
@@ -164,26 +150,6 @@ fn set_archived(session_dir: &Path) -> Result<bool, String> {
     fs::write(&state_path, updated)
         .map_err(|error| format!("Failed to write state.json: {error}"))?;
     Ok(true)
-}
-
-fn remove_dir(path: &Path, mode: DeleteMode) -> anyhow::Result<()> {
-    match mode {
-        DeleteMode::Trash => {
-            trash::delete(path).map_err(|error| anyhow::anyhow!("Failed to move to trash: {error}"))
-        }
-        DeleteMode::Permanent => fs::remove_dir_all(path)
-            .map_err(|error| anyhow::anyhow!("Failed to delete: {error}")),
-    }
-}
-
-fn dir_size(path: &Path) -> u64 {
-    WalkDir::new(path)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_file())
-        .map(|entry| entry.metadata().map(|meta| meta.len()).unwrap_or(0))
-        .sum()
 }
 
 fn prune_empty_parents(start: &Path, stop_root: &Path) {
@@ -230,7 +196,9 @@ mod tests {
         write_file(&root.join(key).join("state.json"), r#"{"archived":false}"#);
         write_file(&root.join(key).join("data.bin"), "12345");
         write_file(
-            &root.join("sessions/wd_other_def456/session_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/state.json"),
+            &root.join(
+                "sessions/wd_other_def456/session_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/state.json",
+            ),
             r#"{"archived":false}"#,
         );
 

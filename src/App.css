@@ -594,7 +594,7 @@ button:disabled {
 .session-row {
   position: relative;
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto minmax(0, 1fr) minmax(120px, 220px) 78px 88px;
   align-items: center;
   gap: 14px;
   padding: 9px 14px;
@@ -950,3 +950,16 @@ button:disabled {
 .reclaim-dialog { width: 460px; }
 .reclaim-dialog .reclaim-error { color: var(--danger); }
 .banner-success { background: var(--success-soft); color: var(--success); flex-shrink: 0; }
+
+/* Usage stays secondary to the session title and separate from disk storage. */
+.row-model-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-secondary); }
+.row-usage { min-width: 0; text-align: right; font-variant-numeric: tabular-nums; display: flex; flex-direction: column; gap: 3px; }
+.row-usage strong { font-size: 13px; font-weight: 600; }
+.token-unit { font-size: 10px; font-weight: 400; color: var(--text-secondary); }
+.usage-breakdown { color: var(--text-secondary); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-cost { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text-tertiary); white-space: nowrap; }
+.cost-known { color: #16804a; }
+[data-theme="dark"] .cost-known { color: #65c991; }
+.usage-summary { padding: 0 24px 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.usage-summary strong { font-weight: 550; }
+@media (max-width: 850px) { .session-row { grid-template-columns: auto minmax(0, 1fr) 122px 72px 70px; gap: 9px; } .row-size { min-width: 70px; } .size-bar { width: 65px; } }

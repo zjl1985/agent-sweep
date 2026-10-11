@@ -120,6 +120,7 @@ fn collect_sessions(sessions_root: &Path, kimi_root: &Path, out: &mut Vec<Sessio
             .unwrap_or_else(|| session_dir_name.to_string());
         let archived = state.archived;
         out.push(SessionEntry {
+            usage: None,
             provider_id: KIMI_PROVIDER_ID.to_string(),
             provider_name: KIMI_PROVIDER_NAME.to_string(),
             session_key,

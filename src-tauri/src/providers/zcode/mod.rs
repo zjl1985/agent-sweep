@@ -70,8 +70,8 @@ impl SessionProvider for ZCodeProvider {
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             archive: true,
-            delete_trash: true,
-            delete_permanent: true,
+            delete_trash: false,
+            delete_permanent: false,
         }
     }
 

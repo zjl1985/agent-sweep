@@ -121,6 +121,7 @@ fn load_sessions(db_path: &Path) -> Result<Vec<SessionEntry>, String> {
             title
         };
         sessions.push(SessionEntry {
+            usage: None,
             provider_id: OPENCODE_PROVIDER_ID.to_string(),
             provider_name: OPENCODE_PROVIDER_NAME.to_string(),
             session_key: id.clone(),

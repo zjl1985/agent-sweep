@@ -1,3 +1,4 @@
+import { SessionUsage, UsageSummary } from "./components/SessionUsage";
 import {
   useCallback,
   useEffect,
@@ -331,7 +332,7 @@ export default function App() {
       });
       closeConfirm();
       await doScan();
-      const summary = strings[locale].deletedNotice(
+      const summary = dialogMode === "trash" ? strings[locale].trashedNotice(result.deletedCount) : strings[locale].deletedNotice(
         result.deletedCount,
         formatSize(result.freedBytes),
       );
@@ -547,6 +548,7 @@ export default function App() {
 
       {scan && scan.providers.length > 1 && <UsageComparison scan={scan} current={providerFilter} locale={locale} disabled={deleting || archiving || scanning} onSelect={switchProvider} formatSize={formatSize} />}
 
+      <UsageSummary sessions={providerSessions} locale={locale} />
       <section class="stats-row" aria-label={t.statsLabel}>
         <div class="stat stat-primary" title={providerFilter === "opencode" ? t.sessionDataNote : undefined}>
           <span class="stat-value">{formatSize(sumBytes(providerSessions))}</span>
@@ -701,6 +703,7 @@ export default function App() {
         ))}
       </div>
 
+      {providerFilter === "zcode" && <p class="selection-hint">{t.zcodeDeleteUnavailable}</p>}
       <footer class="selection-bar">
         <span
           class={`selection-hint ${selected.size > 0 ? "cluster-hidden" : ""}`}
@@ -742,7 +745,7 @@ export default function App() {
         <p>
           {t.confirmBody(selected.size, formatSize(selectedBytes))}
         </p>
-        {providerFilter === "opencode" && <p>{t.openCodeDeleteNote}</p>}
+        {providerFilter === "opencode" ? <p>{t.openCodeDeleteNote}</p> : <p>{t.fileDeleteNote}</p>}
         <fieldset class="mode-fieldset">
           <legend>{t.mode}</legend>
           <label>
@@ -883,8 +886,12 @@ function SessionRow({
           )}
           <span class="row-id">{session.sessionId.slice(0, 8)}…</span>
         </div>
+        <div class="row-model-line" title={session.usage?.models.join(", ")}>
+          <span>{formatDateTime(session.updatedAtMs)}</span>
+          {session.usage && session.usage.models.length > 0 && <span> · {session.usage.models.join(", ")}</span>}
+        </div>
       </div>
-      <div class="row-date">{formatDateTime(session.updatedAtMs)}</div>
+      <SessionUsage usage={session.usage} locale={locale} />
       <div class="row-size">
         {formatSize(session.sizeBytes)}
         <div class="size-bar" aria-hidden="true">

@@ -55,6 +55,9 @@ export interface Strings {
   confirmBody: (count: number, size: string) => string;
   mode: string;
   trashOption: string;
+  fileDeleteNote: string;
+  zcodeDeleteUnavailable: string;
+  trashedNotice: (count: number) => string;
   permanentOption: string;
   cancel: string;
   working: string;
@@ -128,7 +131,10 @@ const en: Strings = {
   confirmBody: (count, size) =>
     `About to process ${count} sessions totaling ${size}.`,
   mode: "Mode",
-  trashOption: "Move to Trash (recoverable from Finder)",
+  trashOption: "Move to Trash (bundle with original-path manifest)",
+  fileDeleteNote: "Close the agent before cleaning. Shared indexes and history are preserved. Trash bundles contain restore.json with the original paths; space is reclaimed only after emptying Trash.",
+  zcodeDeleteUnavailable: "ZCode deletion is unavailable until its task index and session database can be cleaned together.",
+  trashedNotice: (count) => `Moved ${count} sessions to Trash; empty Trash to reclaim disk space`,
   permanentOption: "Delete permanently (irrecoverable)",
   cancel: "Cancel",
   working: "Working…",
@@ -201,7 +207,10 @@ const zh: Strings = {
   confirmTitle: "删除会话",
   confirmBody: (count, size) => `即将处理 ${count} 个会话，共 ${size}。`,
   mode: "处理方式",
-  trashOption: "移到废纸篓（可从访达找回）",
+  trashOption: "移到废纸篓（文件包内附原路径清单）",
+  fileDeleteNote: "请先关闭对应 agent。保留共用索引和历史记录。废纸篓内的会话文件包包含 restore.json 原路径清单，恢复时需按清单放回；清空废纸篓后才会释放空间。",
+  zcodeDeleteUnavailable: "ZCode 暂不支持删除：需要同时处理任务索引和会话数据库，避免只删列表、留下正文。",
+  trashedNotice: (count) => `已移入废纸篓 ${count} 个会话，清空废纸篓后才会释放空间`,
   permanentOption: "永久删除（不可恢复）",
   cancel: "取消",
   working: "处理中…",

@@ -14,7 +14,20 @@ export interface ProviderSummary {
   issues: string[];
 }
 
+export interface SessionUsage {
+  models: string[];
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  requests: number;
+  estimatedCostUsd: number | null;
+  incomplete: boolean;
+  priceDate: string;
+}
+
 export interface SessionEntry {
+  usage: SessionUsage | null;
   providerId: string;
   providerName: string;
   /** Opaque identifier interpreted only by the owning provider. */

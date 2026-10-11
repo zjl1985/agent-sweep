@@ -1,8 +1,6 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use walkdir::WalkDir;
-
 use crate::models::{DeleteMode, DeleteResult, OperationFailure};
 
 use super::CLAUDE_PROVIDER_ID;
@@ -45,7 +43,7 @@ pub(super) fn delete_at(
             .map(|rel_path| claude_root.join(rel_path))
             .and_then(|path| validate_session_file(&path, &allowed_root));
         match validated {
-            Ok(validated) => match remove_session(&validated, mode) {
+            Ok(validated) => match remove_session(&validated, mode, claude_root) {
                 Ok(freed) => {
                     result.deleted_count += 1;
                     result.freed_bytes += freed;
@@ -53,7 +51,10 @@ pub(super) fn delete_at(
                         prune_empty_parents(parent, &projects_root);
                     }
                 }
-                Err(error) => result.failed.push(failure(rel.clone(), error.to_string())),
+                Err((bytes, error)) => {
+                    result.freed_bytes += bytes;
+                    result.failed.push(failure(rel.clone(), error));
+                }
             },
             Err(message) => result.failed.push(failure(rel.clone(), message)),
         }
@@ -63,8 +64,6 @@ pub(super) fn delete_at(
 
 struct ValidatedSession {
     jsonl: PathBuf,
-    sibling_dir: Option<PathBuf>,
-    size_bytes: u64,
 }
 
 fn resolve_rel_path(rel: &str) -> Result<&Path, String> {
@@ -126,61 +125,38 @@ fn validate_session_file(path: &Path, allowed_root: &Path) -> Result<ValidatedSe
         return Err("Path is outside the Claude projects directory".to_string());
     }
 
-    let mut size_bytes = metadata.len();
-    let sibling_candidate = path.with_file_name(stem);
-    let sibling_dir = match fs::symlink_metadata(&sibling_candidate) {
-        Ok(meta) if meta.file_type().is_dir() && !meta.file_type().is_symlink() => {
-            let sibling_canonical = fs::canonicalize(&sibling_candidate)
-                .map_err(|error| format!("Failed to resolve sibling directory: {error}"))?;
-            if !sibling_canonical.starts_with(allowed_root) {
-                return Err("Sibling directory is outside the Claude projects directory".to_string());
-            }
-            size_bytes += dir_size(&sibling_candidate);
-            Some(sibling_candidate)
-        }
-        _ => None,
-    };
-
     Ok(ValidatedSession {
         jsonl: path.to_path_buf(),
-        sibling_dir,
-        size_bytes,
     })
 }
 
-fn remove_session(session: &ValidatedSession, mode: DeleteMode) -> anyhow::Result<u64> {
-    let size = session.size_bytes;
-    if let Some(sibling) = &session.sibling_dir {
-        remove_path(sibling, mode, true)?;
+fn remove_session(
+    session: &ValidatedSession,
+    mode: DeleteMode,
+    root: &Path,
+) -> Result<u64, (u64, String)> {
+    let id = session
+        .jsonl
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or((0, "Invalid session id".into()))?;
+    let mut candidates = vec![];
+    candidates.push(session.jsonl.with_extension(""));
+    for directory in ["file-history", "session-env", "tasks"] {
+        candidates.push(root.join(directory).join(id));
     }
-    remove_path(&session.jsonl, mode, false)?;
-    Ok(size)
-}
-
-fn remove_path(path: &Path, mode: DeleteMode, is_dir: bool) -> anyhow::Result<()> {
-    match mode {
-        DeleteMode::Trash => trash::delete(path)
-            .map_err(|error| anyhow::anyhow!("Failed to move to trash: {error}")),
-        DeleteMode::Permanent => {
-            if is_dir {
-                fs::remove_dir_all(path)
-                    .map_err(|error| anyhow::anyhow!("Failed to delete directory: {error}"))
-            } else {
-                fs::remove_file(path)
-                    .map_err(|error| anyhow::anyhow!("Failed to delete: {error}"))
+    let todos = root.join("todos");
+    if let Some(todos) = super::super::files::validate(root, &todos).map_err(|e| (0, e))? {
+        for entry in fs::read_dir(todos).map_err(|e| (0, e.to_string()))? {
+            let entry = entry.map_err(|e| (0, e.to_string()))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(&format!("{id}-")) && name.ends_with(".json") {
+                candidates.push(entry.path());
             }
         }
     }
-}
-
-fn dir_size(path: &Path) -> u64 {
-    WalkDir::new(path)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_file())
-        .map(|entry| entry.metadata().map(|meta| meta.len()).unwrap_or(0))
-        .sum()
+    candidates.push(session.jsonl.clone());
+    super::super::files::remove_group(root, &candidates, mode)
 }
 
 fn prune_empty_parents(start: &Path, stop_root: &Path) {
@@ -228,7 +204,9 @@ mod tests {
         let jsonl = root.join(&key);
         write_file(&jsonl, "hello");
         write_file(
-            &root.join(format!("projects/-Users-zero-code-demo/{uuid}/tool-results/a.txt")),
+            &root.join(format!(
+                "projects/-Users-zero-code-demo/{uuid}/tool-results/a.txt"
+            )),
             "12345",
         );
         write_file(
@@ -248,6 +226,53 @@ mod tests {
             .join("projects/-Users-zero-code-demo/memory/keep.txt")
             .exists());
         assert!(root.join("projects").exists());
+    }
+
+    #[test]
+    fn deletes_owned_artifacts_and_preserves_shared_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let id = "946808f4-74d1-463d-a5d7-b7e95f9c3794";
+        let key = format!("projects/demo/{id}.jsonl");
+        write_file(&root.join(&key), "body");
+        for folder in ["file-history", "session-env", "tasks"] {
+            write_file(&root.join(folder).join(id).join("data"), "data");
+            write_file(&root.join(folder).join("other/data"), "keep");
+        }
+        let todo = root.join(format!("todos/{id}-agent.json"));
+        write_file(&todo, "todo");
+        write_file(&root.join("todos/other.json"), "keep");
+        write_file(&root.join("history.jsonl"), "shared");
+        let result = delete_at(&[key], DeleteMode::Permanent, root);
+        assert!(result.failed.is_empty());
+        assert_eq!(result.freed_bytes, 20);
+        assert!(!todo.exists());
+        for folder in ["file-history", "session-env", "tasks"] {
+            assert!(!root.join(folder).join(id).exists());
+            assert!(root.join(folder).join("other/data").exists());
+        }
+        assert_eq!(
+            fs::read_to_string(root.join("history.jsonl")).unwrap(),
+            "shared"
+        );
+        assert!(root.join("todos/other.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_associated_artifact_prevents_transcript_deletion() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let id = "946808f4-74d1-463d-a5d7-b7e95f9c3794";
+        let key = format!("projects/demo/{id}.jsonl");
+        write_file(&dir.path().join(&key), "keep");
+        fs::create_dir(dir.path().join("file-history")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("file-history").join(id))
+            .unwrap();
+        let result = delete_at(&[key.clone()], DeleteMode::Permanent, dir.path());
+        assert_eq!(result.deleted_count, 0);
+        assert_eq!(result.failed.len(), 1);
+        assert!(dir.path().join(key).exists());
     }
 
     #[test]

@@ -11,6 +11,7 @@ pub struct ProviderCapabilities {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionEntry {
+    pub usage: Option<SessionUsage>,
     pub provider_id: String,
     pub provider_name: String,
     /// Provider-owned opaque identifier used for archive and delete operations.
@@ -170,4 +171,18 @@ pub struct StorageCleanupResult {
     pub removed_event_groups: u32,
     pub freed_bytes: u64,
     pub warning: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionUsage {
+    pub models: Vec<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub requests: u64,
+    pub estimated_cost_usd: Option<f64>,
+    pub incomplete: bool,
+    pub price_date: String,
 }

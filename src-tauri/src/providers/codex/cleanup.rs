@@ -46,17 +46,26 @@ pub(super) fn delete_at(
     for rel in session_keys {
         let validated = resolve_rel_path(rel)
             .map(|rel_path| codex_root.join(rel_path))
-            .and_then(|path| validate_session_file(&path, &allowed_roots).map(|size| (path, size)));
+            .and_then(|path| validate_session_file(&path, &allowed_roots).map(|_| path));
         match validated {
-            Ok((path, size)) => match remove(&path, mode) {
-                Ok(()) => {
+            Ok(path) => match super::super::files::remove_group(
+                codex_root,
+                &[path.clone(), path.with_extension("jsonl.zst")],
+                mode,
+            ) {
+                Ok(size) => {
                     result.deleted_count += 1;
-                    result.freed_bytes += size;
+                    if mode == DeleteMode::Permanent {
+                        result.freed_bytes += size;
+                    }
                     if let Some(parent) = path.parent() {
                         prune_empty_parents(parent, &sessions_root);
                     }
                 }
-                Err(error) => result.failed.push(failure(rel.clone(), error.to_string())),
+                Err((bytes, error)) => {
+                    result.freed_bytes += bytes;
+                    result.failed.push(failure(rel.clone(), error));
+                }
             },
             Err(message) => result.failed.push(failure(rel.clone(), message)),
         }
@@ -175,19 +184,6 @@ fn validate_session_file(path: &Path, allowed_roots: &[PathBuf]) -> Result<u64, 
     Ok(metadata.len())
 }
 
-fn remove(path: &Path, mode: DeleteMode) -> anyhow::Result<()> {
-    match mode {
-        DeleteMode::Trash => {
-            trash::delete(path).map_err(|error| anyhow::anyhow!("Failed to move to trash: {error}"))
-        }
-        DeleteMode::Permanent => {
-            fs::remove_file(path).map_err(|error| anyhow::anyhow!("Failed to delete: {error}"))
-        }
-    }
-}
-
-/// After deleting a file, prunes empty DD/MM/YYYY directories bottom-up, but
-/// never removes the sessions root itself.
 fn prune_empty_parents(start: &Path, stop_root: &Path) {
     let stop = match fs::canonicalize(stop_root) {
         Ok(path) => path,
@@ -287,6 +283,24 @@ mod tests {
         assert!(!b.exists());
         // The archive root itself is kept.
         assert!(root.join("archived_sessions").exists());
+    }
+
+    #[test]
+    fn delete_includes_compressed_companion_but_keeps_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = active("rollout-test.jsonl");
+        let file = dir.path().join(&key);
+        write_rollout(&file, "body");
+        fs::write(file.with_extension("jsonl.zst"), "packed").unwrap();
+        fs::write(dir.path().join("session_index.jsonl"), "shared").unwrap();
+        let result = delete_at(&[key], DeleteMode::Permanent, dir.path());
+        assert!(result.failed.is_empty());
+        assert_eq!(result.freed_bytes, 10);
+        assert!(!file.with_extension("jsonl.zst").exists());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("session_index.jsonl")).unwrap(),
+            "shared"
+        );
     }
 
     #[test]

@@ -118,6 +118,7 @@ fn collect_rollout_files(
             Err(_) => name.to_string(),
         };
         out.push(SessionEntry {
+            usage: None,
             provider_id: CODEX_PROVIDER_ID.to_string(),
             provider_name: CODEX_PROVIDER_NAME.to_string(),
             session_key: rel_path,

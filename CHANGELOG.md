@@ -9,12 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restore the compact horizontal agent usage comparison.
+- Group file-backed session artifacts for cleanup, roll back failed moves, and preserve shared indexes.
+- Include Claude session-owned history, environment, tasks and todos, and Codex compressed companions.
+- Stop reporting Trash moves as freed disk space; disable incomplete ZCode deletion.
+
 - OpenCode deletion now removes matching durable event streams in the same transaction and compacts the database; reclaimed bytes reflect measured disk changes.
 - Added explicit recovery of space occupied by event streams from previously deleted OpenCode sessions.
 - Count UTF-8 bytes and event payloads in OpenCode session sizes; exclude them from database overhead to avoid double-counting.
 - Show operation results visibly and report database contention or partial cleanup.
 
 ### Added
+
+- Per-session models, input/output/cache tokens and estimated USD cost across five agent adapters.
+- Offline dated model prices, context-tier pricing, missing-data indicators and selected-agent usage coverage.
 
 - Horizontal agent storage comparison with clickable segments.
 

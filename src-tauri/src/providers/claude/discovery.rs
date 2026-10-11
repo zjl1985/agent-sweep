@@ -136,6 +136,7 @@ fn collect_project_sessions(
             Err(_) => format!("projects/{name}"),
         };
         out.push(SessionEntry {
+            usage: None,
             provider_id: CLAUDE_PROVIDER_ID.to_string(),
             provider_name: CLAUDE_PROVIDER_NAME.to_string(),
             session_key,

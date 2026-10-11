@@ -97,13 +97,14 @@ fn load_sessions(db_path: &Path, root: &Path) -> Result<Vec<SessionEntry>, Strin
         };
         let session_key = format!("{workspace_key}::{task_id}");
         sessions.push(SessionEntry {
+            usage: None,
             provider_id: ZCODE_PROVIDER_ID.to_string(),
             provider_name: ZCODE_PROVIDER_NAME.to_string(),
             session_key,
             capabilities: ProviderCapabilities {
                 archive: !archived,
-                delete_trash: true,
-                delete_permanent: true,
+                delete_trash: false,
+                delete_permanent: false,
             },
             session_id: task_id.clone(),
             title,

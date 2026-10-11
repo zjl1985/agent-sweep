@@ -1,3 +1,5 @@
+mod usage;
+mod files;
 mod claude;
 mod codex;
 mod kimi;
@@ -49,6 +51,7 @@ impl ProviderRegistry {
         for provider in &self.providers {
             let capabilities = provider.capabilities();
             let mut scan = provider.scan(now_ms);
+            usage::enrich(provider.id(), std::path::Path::new(&provider.root_label()), &mut scan);
             let provider_id = provider.id().to_string();
             let provider_name = provider.name().to_string();
             for session in &mut scan.sessions {
@@ -243,6 +246,7 @@ mod tests {
         fn scan(&self, _now_ms: i64) -> ProviderScan {
             let mut scan = ProviderScan::empty();
             scan.sessions.push(SessionEntry {
+            usage: None,
                 provider_id: String::new(),
                 provider_name: String::new(),
                 session_key: "opaque-key".to_string(),
