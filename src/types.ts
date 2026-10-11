@@ -21,9 +21,7 @@ export interface SessionUsage {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   requests: number;
-  estimatedCostUsd: number | null;
   incomplete: boolean;
-  priceDate: string;
 }
 
 export interface SessionEntry {

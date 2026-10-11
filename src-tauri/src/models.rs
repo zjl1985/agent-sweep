@@ -182,7 +182,5 @@ pub struct SessionUsage {
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
     pub requests: u64,
-    pub estimated_cost_usd: Option<f64>,
     pub incomplete: bool,
-    pub price_date: String,
 }

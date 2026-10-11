@@ -21,8 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Per-session models, input/output/cache tokens and estimated USD cost across five agent adapters.
-- Offline dated model prices, context-tier pricing, missing-data indicators and selected-agent usage coverage.
+- Per-session models and input/output/cache tokens across five agent adapters.
+- Incomplete-data indicators and selected-agent usage coverage.
 
 - Horizontal agent storage comparison with clickable segments.
 
@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rusqlite` (bundled) for OpenCode and ZCode SQLite session stores.
 
 ### Changed
+
+- Remove estimated costs, pricing catalog and pricing refresh script; retain token and storage usage.
 
 - Default to a remembered single agent; scope statistics and sessions to the selection, and collapse other storage details.
 - Disable OpenCode Trash mode because SQLite session deletion is irreversible.

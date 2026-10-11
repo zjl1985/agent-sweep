@@ -1,4 +1,4 @@
-//! Read-only usage extraction. Unknown prices stay unknown, never zero-filled.
+//! Read-only token usage extraction with explicit incomplete-history reporting.
 use crate::models::{ProviderScan, SessionUsage};
 use serde_json::Value;
 use std::{
@@ -422,11 +422,6 @@ fn database_usage(path: &Path, provider: &str) -> Result<HashMap<String, Parsed>
         if model.is_empty() {
             model = text(&v["model"], "modelID");
         }
-        let provider_id = text(&v, "providerID");
-        let qualified = format!("{provider_id}/{model}").to_lowercase();
-        if prices()["prices"].get(&qualified).is_some() {
-            model = qualified;
-        }
         let tokens = Tokens {
             input: if provider == "zcode" {
                 num(t, "input").saturating_sub(read + write)
@@ -451,68 +446,12 @@ fn database_usage(path: &Path, provider: &str) -> Result<HashMap<String, Parsed>
     }
     Ok(result)
 }
-fn prices() -> &'static Value {
-    static PRICES: OnceLock<Value> = OnceLock::new();
-    PRICES.get_or_init(|| {
-        serde_json::from_str(include_str!("../../data/prices.json")).expect("bundled price catalog")
-    })
-}
-fn cost(sample: &Sample) -> Option<f64> {
-    let id = sample.model.to_lowercase();
-    let catalog = &prices()["prices"];
-    let normalized = if id.contains("claude-") {
-        id.replace('.', "-")
-    } else {
-        id.clone()
-    };
-    let base = catalog.get(&id).or_else(|| catalog.get(&normalized))?;
-    let t = sample.tokens;
-    let prompt = t.input + t.read + t.write;
-    let mut rate = base;
-    if let Some(tiers) = base["tiers"].as_array() {
-        for tier in tiers {
-            if let Some(threshold) = tier.pointer("/tier/size").and_then(Value::as_u64) {
-                if prompt > threshold {
-                    rate = tier;
-                }
-            }
-        }
-    }
-    let rate_for = |key: &str| {
-        rate.get(key)
-            .or_else(|| base.get(key))
-            .and_then(Value::as_f64)
-            .filter(|v| v.is_finite() && *v >= 0.0)
-    };
-    let charge = |n: u64, key: &str| {
-        if n == 0 {
-            Some(0.0)
-        } else {
-            Some(n as f64 * rate_for(key)?)
-        }
-    };
-    let one_hour = if t.write_1h == 0 {
-        0.0
-    } else {
-        t.write_1h as f64 * rate_for("input")? * 2.0
-    };
-    Some(
-        (charge(t.input, "input")?
-            + charge(t.output, "output")?
-            + charge(t.read, "cache_read")?
-            + charge(t.write.saturating_sub(t.write_1h), "cache_write")?
-            + one_hour)
-            / 1_000_000.0,
-    )
-}
 fn finish(parsed: Parsed) -> Option<SessionUsage> {
     if parsed.samples.is_empty() {
         return None;
     }
     let mut u = SessionUsage {
-        estimated_cost_usd: Some(0.0),
         incomplete: parsed.incomplete,
-        price_date: prices()["updated"].as_str().unwrap_or("").into(),
         ..Default::default()
     };
     for s in parsed.samples.values() {
@@ -524,12 +463,8 @@ fn finish(parsed: Parsed) -> Option<SessionUsage> {
         u.cache_read_tokens += s.tokens.read;
         u.cache_write_tokens += s.tokens.write;
         u.requests += 1;
-        u.estimated_cost_usd = u.estimated_cost_usd.zip(cost(s)).map(|(a, b)| a + b);
     }
     u.models.sort();
-    if u.incomplete {
-        u.estimated_cost_usd = None;
-    }
     Some(u)
 }
 
@@ -560,7 +495,6 @@ mod tests {
         assert_eq!(u.input_tokens, 400);
         assert_eq!(u.cache_read_tokens, 600);
         assert_eq!(u.output_tokens, 20);
-        assert!((u.estimated_cost_usd.unwrap() - 0.00112).abs() < 1e-9);
     }
     #[test]
     fn legacy_counters_do_not_double_count_replays() {
@@ -568,7 +502,6 @@ mod tests {
         let u = parse(&[event(100), event(100), event(150)], "codex");
         assert_eq!(u.input_tokens, 150);
         assert_eq!(u.output_tokens, 10);
-        assert_eq!(u.estimated_cost_usd, None);
     }
     #[test]
     fn claude_streaming_snapshots_count_once_and_cache_separately() {
@@ -578,10 +511,9 @@ mod tests {
         assert_eq!(u.input_tokens, 100);
         assert_eq!(u.output_tokens, 20);
         assert_eq!(u.cache_write_tokens, 50);
-        assert!((u.estimated_cost_usd.unwrap() - 0.0008475).abs() < 1e-9);
     }
     #[test]
-    fn zero_usage_synthetic_notices_do_not_block_real_cost() {
+    fn zero_usage_synthetic_notices_do_not_count_as_requests() {
         let u = parse(
             &[
                 serde_json::json!({"type":"assistant","message":{"id":"synthetic","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0}}}),
@@ -591,7 +523,6 @@ mod tests {
         );
         assert_eq!(u.requests, 1);
         assert_eq!(u.models, vec!["claude-sonnet-4-6"]);
-        assert!((u.estimated_cost_usd.unwrap() - 0.0006).abs() < 1e-9);
     }
 
     #[test]
@@ -612,30 +543,12 @@ mod tests {
             ),
             (3, 4, 5, 6)
         );
-        assert_eq!(u.estimated_cost_usd, None);
     }
     #[test]
-    fn pricing_uses_request_context_tier_and_unknown_is_not_zero() {
-        let mut sample = Sample {
-            model: "gpt-6-sol".into(),
-            tokens: Tokens {
-                input: 272000,
-                output: 100,
-                ..Default::default()
-            },
-        };
-        assert!((cost(&sample).unwrap() - 0.545).abs() < 1e-9);
-        sample.tokens.input += 1;
-        assert!((cost(&sample).unwrap() - 1.089504).abs() < 1e-9);
-        sample.model = "unknown-gpt-6-sol".into();
-        assert_eq!(cost(&sample), None);
-    }
-    #[test]
-    fn malformed_history_suppresses_complete_cost() {
+    fn malformed_history_is_reported_as_incomplete() {
         let text="{\"type\":\"assistant\",\"message\":{\"id\":\"m\",\"model\":\"claude-sonnet-4-6\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n{broken";
         let u = finish(parse_file(text.as_bytes(), "claude").unwrap()).unwrap();
         assert!(u.incomplete);
-        assert_eq!(u.estimated_cost_usd, None);
     }
     #[test]
     fn database_adapters_normalize_different_cache_and_reasoning_conventions() {
@@ -702,17 +615,10 @@ mod tests {
                 .filter(|s| s.provider_id == p.id)
                 .collect();
             eprintln!(
-                "{}: {} sessions, {} usage, {} priced",
+                "{}: {} sessions, {} with usage",
                 p.id,
                 sessions.len(),
-                sessions.iter().filter(|s| s.usage.is_some()).count(),
-                sessions
-                    .iter()
-                    .filter(|s| s
-                        .usage
-                        .as_ref()
-                        .is_some_and(|u| u.estimated_cost_usd.is_some()))
-                    .count()
+                sessions.iter().filter(|s| s.usage.is_some()).count()
             );
         }
         if let Ok(path) = std::env::var("AGENT_SWEEP_USAGE_PREVIEW") {
