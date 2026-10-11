@@ -594,7 +594,7 @@ button:disabled {
 .session-row {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(120px, 220px) 78px 88px;
+  grid-template-columns: auto minmax(0, 1fr) 240px 100px 88px;
   align-items: center;
   gap: 14px;
   padding: 9px 14px;
@@ -956,10 +956,18 @@ button:disabled {
 .row-usage { min-width: 0; text-align: right; font-variant-numeric: tabular-nums; display: flex; flex-direction: column; gap: 3px; }
 .row-usage strong { font-size: 13px; font-weight: 600; }
 .token-unit { font-size: 10px; font-weight: 400; color: var(--text-secondary); }
-.usage-breakdown { color: var(--text-secondary); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-total { display: flex; justify-content: flex-end; align-items: baseline; gap: 4px; }
+.usage-partial { font-size: 10px; color: var(--text-secondary); margin-left: 3px; }
+.usage-breakdown { display: flex; flex-direction: column; gap: 1px; color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
+.usage-metrics-line { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px 10px; }
+.usage-metric { display: inline-flex; gap: 4px; white-space: nowrap; }
+.usage-number { font-variant-numeric: tabular-nums; }
+.usage-unavailable, .cost-unavailable { color: var(--text-secondary); font-size: 11px; }
+.cost-reason { font-size: 10px; color: var(--text-secondary); }
+.row-cost { display: flex; flex-direction: column; gap: 3px; align-items: flex-end; }
 .row-cost { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text-tertiary); white-space: nowrap; }
 .cost-known { color: #16804a; }
 [data-theme="dark"] .cost-known { color: #65c991; }
 .usage-summary { padding: 0 24px 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
 .usage-summary strong { font-weight: 550; }
-@media (max-width: 850px) { .session-row { grid-template-columns: auto minmax(0, 1fr) 122px 72px 70px; gap: 9px; } .row-size { min-width: 70px; } .size-bar { width: 65px; } }
+@media (max-width: 850px) { .session-row { grid-template-columns: auto minmax(0, 1fr) 190px 88px 70px; gap: 9px; } .row-size { min-width: 70px; } .size-bar { width: 65px; } }
