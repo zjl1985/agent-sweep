@@ -27,6 +27,7 @@ import {
   SunIcon,
   TrashIcon,
 } from "./components/Icons";
+import { UsageComparison } from "./components/UsageComparison";
 import "./App.css";
 
 type StatusFilter = "all" | "active" | "archived";
@@ -39,6 +40,7 @@ const AGE_VALUES: AgeFilter[] = [0, 7, 30, 90];
 // Keep the legacy keys so an in-place upgrade retains the user's settings.
 const MODE_STORAGE_KEY = "codex-clear:delete-mode";
 const THEME_STORAGE_KEY = "codex-clear:theme";
+const PROVIDER_STORAGE_KEY = "agent-sweep:provider";
 const DAY_MS = 86_400_000;
 
 function selectionKey(session: SessionEntry): string {
@@ -100,7 +102,8 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [providerFilter, setProviderFilter] = useState("all");
+  const [providerFilter, setProviderFilter] = useState(() => localStorage.getItem(PROVIDER_STORAGE_KEY) || "codex");
+  const [usageOpen, setUsageOpen] = useState(false);
   const [ageFilter, setAgeFilter] = useState<AgeFilter>(0);
   const [sortBy, setSortBy] = useState<SortKey>("size");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -162,16 +165,14 @@ export default function App() {
       const result = await scanSessions();
       setScan(result);
       setProviderFilter((current) =>
-        result.providers.some((provider) => provider.id === current) ? current : "all",
+        result.providers.some((provider) => provider.id === current)
+          ? current
+          : result.providers.find((provider) => provider.id === "codex")?.id
+            ?? result.providers[0]?.id ?? "codex",
       );
       setSelected(new Set());
       setActiveIndex(0);
-      setNotice(
-        strings[locale].scanNotice(
-          result.sessions.length,
-          formatSize(result.sessionsBytes),
-        ),
-      );
+      setNotice(null);
     } catch (cause) {
       setError(String(cause));
     } finally {
@@ -183,12 +184,38 @@ export default function App() {
     void doScan();
   }, [doScan]);
 
+  useEffect(() => {
+    localStorage.setItem(PROVIDER_STORAGE_KEY, providerFilter);
+  }, [providerFilter]);
+
+  const switchProvider = (id: string) => {
+    setProviderFilter(id);
+    setSelected(new Set());
+    setStatusFilter("all");
+    setQuery("");
+    setAgeFilter(0);
+    setActiveIndex(0);
+    setUsageOpen(false);
+    setNotice(null);
+  };
+
+  const provider = scan?.providers.find((entry) => entry.id === providerFilter);
+  const providerSessions = useMemo(
+    () => (scan?.sessions ?? []).filter((session) => session.providerId === providerFilter),
+    [scan, providerFilter],
+  );
+  const usage = (scan?.otherDirs ?? []).filter(
+    (dir) => dir.providerId === providerFilter && dir.sizeBytes > 0,
+  );
+  const activeSessions = providerSessions.filter((session) => !session.archived);
+  const archivedSessions = providerSessions.filter((session) => session.archived);
+  const sumBytes = (sessions: SessionEntry[]) => sessions.reduce((sum, session) => sum + session.sizeBytes, 0);
+
   const visibleSessions = useMemo(() => {
-    const sessions = scan?.sessions ?? [];
+    const sessions = providerSessions;
     const keyword = query.trim().toLowerCase();
     const cutoff = ageFilter === 0 ? 0 : Date.now() - ageFilter * DAY_MS;
     return sessions.filter((session) => {
-      if (providerFilter !== "all" && session.providerId !== providerFilter) return false;
       if (statusFilter === "active" && session.archived) return false;
       if (statusFilter === "archived" && !session.archived) return false;
       if (cutoff !== 0 && session.updatedAtMs >= cutoff) return false;
@@ -203,7 +230,7 @@ export default function App() {
         .toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [scan, query, providerFilter, statusFilter, ageFilter]);
+  }, [providerSessions, query, statusFilter, ageFilter]);
 
   const sortedSessions = useMemo(() => {
     const sessions = [...visibleSessions];
@@ -221,8 +248,8 @@ export default function App() {
   );
 
   const selectedSessions = useMemo(
-    () => (scan?.sessions ?? []).filter((s) => selected.has(selectionKey(s))),
-    [scan, selected],
+    () => providerSessions.filter((s) => selected.has(selectionKey(s))),
+    [providerSessions, selected],
   );
   const selectedBytes = selectedSessions.reduce(
     (sum, s) => sum + s.sizeBytes,
@@ -372,7 +399,8 @@ export default function App() {
         target &&
         (target.tagName === "INPUT" ||
           target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT")
+          target.tagName === "SELECT" ||
+          target.closest("button, summary"))
       ) {
         return;
       }
@@ -415,8 +443,8 @@ export default function App() {
     row?.scrollIntoView({ block: "nearest" });
   }, [activeIndex, sortedSessions]);
 
-  const activeCount = scan?.activeCount ?? 0;
-  const archivedCount = scan?.archivedCount ?? 0;
+  const activeCount = activeSessions.length;
+  const archivedCount = archivedSessions.length;
 
   const ageLabel = (value: AgeFilter): string =>
     value === 0
@@ -431,7 +459,22 @@ export default function App() {
     <div class="app-shell">
       <header class="app-header">
         <div class="brand">
-          <h1 class="brand-title">AgentSweep</h1>
+          <div class="brand-heading">
+            <h1 class="brand-title">AgentSweep</h1>
+            {scan && scan.providers.length > 0 && (
+              <select
+                class="select provider-select"
+                value={providerFilter}
+                onChange={(event) => switchProvider(event.currentTarget.value)}
+                aria-label={t.providerFilterLabel}
+                disabled={deleting || archiving || scanning}
+              >
+                {scan.providers.map((entry) => (
+                  <option key={entry.id} value={entry.id}>{entry.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
           <p class="brand-sub">{t.brandSubtitle}</p>
         </div>
         <div class="header-actions">
@@ -489,65 +532,63 @@ export default function App() {
           </button>
         </div>
       )}
-      {scan && scan.issues.length > 0 && (
+      {provider && provider.issues.length > 0 && (
         <div class="banner banner-warning">
-          {scan.issues
+          {provider.issues
             .map((issue) => localizeMessage(issue, locale))
             .join(locale === "zh" ? "；" : "; ")}
         </div>
       )}
 
+      {scan && scan.providers.length > 1 && <UsageComparison scan={scan} current={providerFilter} locale={locale} disabled={deleting || archiving || scanning} onSelect={switchProvider} formatSize={formatSize} />}
+
       <section class="stats-row" aria-label={t.statsLabel}>
         <div class="stat stat-primary">
-          <span class="stat-value">{formatSize(scan?.sessionsBytes ?? 0)}</span>
+          <span class="stat-value">{formatSize(sumBytes(providerSessions))}</span>
           <span class="stat-label">
-            {t.totalSize(scan?.sessions.length ?? 0)}
+            {t.totalSize(providerSessions.length)}
           </span>
         </div>
         <div class="stat">
           <span class="stat-value">{activeCount}</span>
           <span class="stat-label">
-            {t.activeLabel(formatSize(scan?.activeBytes ?? 0))}
+            {t.activeLabel(formatSize(sumBytes(activeSessions)))}
           </span>
         </div>
         <div class="stat">
           <span class="stat-value">{archivedCount}</span>
           <span class="stat-label">
-            {t.archivedLabel(formatSize(scan?.archivedBytes ?? 0))}
+            {t.archivedLabel(formatSize(sumBytes(archivedSessions)))}
           </span>
         </div>
         <div class="stat">
-          <span class="stat-value">{formatSize(scan?.totalBytes ?? 0)}</span>
-          <span class="stat-label">{t.allProvidersTotal}</span>
+          <span class="stat-value">{formatSize(provider?.totalBytes ?? 0)}</span>
+          <span class="stat-label">{t.providerTotal(provider?.name ?? "Agent")}</span>
         </div>
       </section>
 
-      {scan && scan.providers.length > 0 && (
-        <section class="overview-row" aria-label={t.providerFilterLabel}>
-          <DatabaseIcon size={14} />
-          <div class="overview-chips">
-            {scan.providers.map((provider) => (
-              <span class="overview-chip" title={provider.rootLabel} key={provider.id}>
-                {provider.name} · {provider.sessionCount} · {formatSize(provider.totalBytes)}
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {scan && scan.otherDirs.length > 0 && (
-        <section class="overview-row" aria-label={t.otherUsageLabel}>
-          <DatabaseIcon size={14} />
-          <span class="overview-title">{t.otherUsage}</span>
-          <div class="overview-chips">
-            {scan.otherDirs.map((dir) => (
-              <span class="overview-chip" title={`${dir.providerName}: ${dir.note}`}>
-                {(scan.providers.length > 1 ? `${dir.providerName} · ` : "")}
-                {localizeDirName(dir.name, locale)}{" "}
-                {formatSize(dir.sizeBytes)}
-              </span>
-            ))}
-          </div>
+      {usage.length > 0 && (
+        <section class="usage-section" aria-label={t.otherUsageLabel}>
+          <button
+            class="usage-toggle"
+            aria-expanded={usageOpen}
+            aria-controls="usage-details"
+            onClick={() => setUsageOpen((open) => !open)}
+          >
+            <DatabaseIcon size={14} />
+            <span>{t.otherUsage}</span>
+            <span>{formatSize(usage.reduce((sum, dir) => sum + dir.sizeBytes, 0))}</span>
+            <span class="usage-chevron" aria-hidden="true">{usageOpen ? "⌃" : "⌄"}</span>
+          </button>
+          {usageOpen && (
+            <div class="overview-chips usage-details" id="usage-details">
+              {usage.map((dir) => (
+                <span class="overview-chip" key={dir.name} title={dir.note}>
+                  {localizeDirName(dir.name, locale)} {formatSize(dir.sizeBytes)}
+                </span>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
@@ -563,23 +604,10 @@ export default function App() {
             aria-label={t.searchLabel}
           />
         </div>
-        {scan && scan.providers.length > 1 && (
-          <select
-            class="select"
-            value={providerFilter}
-            onChange={(event) => setProviderFilter(event.currentTarget.value)}
-            aria-label={t.providerFilterLabel}
-          >
-            <option value="all">{t.allProviders}</option>
-            {scan.providers.map((provider) => (
-              <option key={provider.id} value={provider.id}>{provider.name}</option>
-            ))}
-          </select>
-        )}
         <div class="chip-group" role="group" aria-label={t.statusFilterLabel}>
           {(
             [
-              ["all", t.chipAll(scan?.sessions.length ?? 0)],
+              ["all", t.chipAll(providerSessions.length)],
               ["active", t.chipActive(activeCount)],
               ["archived", t.chipArchived(archivedCount)],
             ] as [StatusFilter, string][]
@@ -842,7 +870,6 @@ function SessionRow({
               <FolderIcon size={11} /> {session.workspace}
             </span>
           )}
-          <span class="row-id">{session.providerName}</span>
           <span class="row-id">{session.sessionId.slice(0, 8)}…</span>
         </div>
       </div>

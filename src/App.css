@@ -873,3 +873,74 @@ button:disabled {
       border-color 120ms ease;
   }
 }
+
+/* Agent selection scopes the entire workspace. */
+.brand-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.provider-select {
+  padding: 3px 8px;
+  font-size: 12px;
+  max-width: 180px;
+}
+
+.usage-section {
+  font-size: 12px;
+  flex-shrink: 0;
+  margin: 0 24px 4px;
+}
+
+.usage-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-toggle:hover { color: var(--text); }
+.usage-chevron { color: var(--text-tertiary); }
+.usage-details {
+  padding: 6px 0;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.app-header, .stats-row, .toolbar { flex-shrink: 0; }
+
+@media (max-width: 1000px) {
+  .search-box { flex-basis: 100%; }
+  .selection-hint { max-width: 44%; }
+}
+
+/* One continuous, proportional storage bar with stable agent colors. */
+.agent-storage { margin: 2px 24px 16px; flex-shrink: 0; }
+.agent-storage-heading { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; font-size: 12px; color: var(--text-secondary); }
+.agent-storage-heading strong { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+.agent-storage-caption { margin-left: 8px; color: var(--text-tertiary); font-size: 11px; }
+.agent-storage-bar { display: flex; height: 20px; border-radius: 6px; background: var(--surface-muted); overflow: hidden; }
+.agent-storage-segment { display: block; flex: 0 0 auto; min-width: 0; height: 100%; padding: 0; border: 0; border-right: 2px solid var(--surface); cursor: pointer; transition: filter 120ms ease; }
+.agent-storage-segment:last-child { border-right: 0; }
+.agent-storage-segment:hover:not(:disabled) { filter: brightness(1.12); }
+.agent-storage-segment:focus-visible { outline-offset: -3px; outline-color: var(--text); }
+.agent-storage-legend { display: flex; flex-wrap: wrap; align-items: center; column-gap: 16px; row-gap: 4px; margin-top: 8px; }
+.agent-legend-item { display: inline-flex; align-items: center; gap: 6px; padding: 4px 0; border: 0; border-bottom: 2px solid transparent; background: transparent; font-size: 11.5px; color: var(--text-secondary); cursor: pointer; }
+.agent-legend-item:hover:not(:disabled) { color: var(--text); }
+.agent-legend-current { color: var(--text); border-bottom-color: var(--border-strong); }
+.agent-legend-dot { width: 7px; height: 7px; border-radius: 2px; flex-shrink: 0; }
+.agent-legend-size { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+@media (max-height: 620px) {
+  .agent-storage { margin-bottom: 8px; }
+  .agent-storage-bar { height: 16px; }
+  .stat { padding-top: 8px; padding-bottom: 8px; }
+  .selection-bar { height: 42px; }
+}

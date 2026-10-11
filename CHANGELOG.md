@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Horizontal agent storage comparison with clickable segments.
+
+- Claude Code, OpenCode, Kimi Code, and ZCode provider adapters (scan + delete; archive where supported).
+- `rusqlite` (bundled) for OpenCode and ZCode SQLite session stores.
+
 ### Changed
+
+- Default to a remembered single agent; scope statistics and sessions to the selection, and collapse other storage details.
+- Disable OpenCode Trash mode because SQLite session deletion is irreversible.
 
 - Renamed the application from CodexClear to AgentSweep and the package/binary to
   `agent-sweep`.

@@ -1,6 +1,6 @@
 # AgentSweep
 
-A local-first desktop app for inspecting and safely cleaning AI coding-agent sessions. Agent-specific storage formats and operations live behind provider adapters; the first supported provider is Codex (`~/.codex`). Built with Tauri 2 (Rust backend + Preact frontend), with all filesystem access confined to Rust.
+A local-first desktop app for inspecting and safely cleaning AI coding-agent sessions. Agent-specific storage formats and operations live behind provider adapters for Codex, Claude Code, OpenCode, Kimi Code, and ZCode. Built with Tauri 2 (Rust backend + Preact frontend), with all filesystem access confined to Rust.
 
 <p align="center">
   <img src="docs/screenshot-light.png#gh-light-mode-only" alt="AgentSweep — light theme" width="820">
@@ -14,17 +14,23 @@ A local-first desktop app for inspecting and safely cleaning AI coding-agent ses
 - **Provider adapters** — a registry discovers agent stores and normalizes sessions without leaking provider-specific paths into shared orchestration
 - **Bilingual UI** — English and Chinese, remembered locally
 - **Light & dark themes** — follows the system appearance until overridden
-- **Storage stats** — aggregate session usage plus per-provider totals
-- **Per-session sizes** — sortable by size or update time, with title, workspace, provider, and status
+- **Storage stats** — selected-agent statistics and a horizontal storage comparison across agents
+- **Per-session sizes** — sortable by size or update time, with title, workspace, and status
 - **Filters and bulk selection** — search, active/archived, age, and select-all-filtered
 - **Capability-aware operations** — Archive and Delete are only enabled when the owning provider supports them
 - **Safe cleanup** — Trash by default or permanent deletion after explicit confirmation
 
 ## Supported providers
 
-| Provider | Discover | Archive | Trash | Permanent delete |
-| --- | --- | --- | --- | --- |
-| Codex | Yes | Yes | Yes | Yes |
+| Provider | Root | Discover | Archive | Trash | Permanent delete |
+| --- | --- | --- | --- | --- | --- |
+| Codex | `~/.codex` | Yes | Yes | Yes | Yes |
+| Claude Code | `~/.claude` | Yes | No | Yes | Yes |
+| OpenCode | `~/.local/share/opencode` | Yes | Yes | No | Yes |
+| Kimi Code | `~/.kimi-code` | Yes | Yes | Yes | Yes |
+| ZCode | `~/.zcode` | Yes | Yes | Yes | Yes |
+
+OpenCode stores sessions in SQLite and supports permanent deletion only; its Trash option is disabled.
 
 Codex covers the session storage shared by the ChatGPT app, Codex desktop app, and [Codex CLI](https://developers.openai.com/codex/). Additional agents can be added as isolated adapters without changing shared UI/API semantics.
 
@@ -36,6 +42,10 @@ Codex covers the session storage shared by the ChatGPT app, Codex desktop app, a
 - The Codex scanner only reads a bounded number of leading JSONL lines (512 KB per line cap)
 - Codex deletion only accepts regular `rollout-*.jsonl` files inside `sessions/` or `archived_sessions/`; index and history files are never modified
 - Empty Codex date directories are pruned after cleanup, but storage roots are retained
+- Claude Code deletes UUID `*.jsonl` sessions under `projects/` plus optional sibling dirs; never touches `history.jsonl` or credentials
+- OpenCode archives by setting `time_archived`; deletes CASCADE from `opencode.db` and never touches auth files
+- Kimi Code archives via `state.json`; deletes whole session directories under `sessions/` after symlink checks
+- ZCode soft-deletes the tasks index and only removes validated artifacts under `~/.zcode/cli/` (never the Electron Application Support profile)
 
 ## Architecture
 
@@ -79,9 +89,12 @@ Implement the Rust `SessionProvider` contract, declare capabilities, and registe
 
 ## Known limitations
 
-- Only the Codex adapter is included today
 - Codex index/history orphan entries are intentionally left untouched after rollout deletion
 - Codex titles depend on `session_index.jsonl`; missing entries fall back to workspace and date
+- Claude Code has no first-class archive concept, so archive is disabled
+- Claude project folder names encode paths lossily (`-` → `/`); workspace labels are heuristic
+- OpenCode SQLite rows cannot be moved to the OS trash; only explicitly confirmed permanent deletion is supported
+- ZCode never scans `~/Library/Application Support/ZCode` (Chromium profile)
 - Provider roots are detected from conventional locations and are not yet configurable
 
 ## License

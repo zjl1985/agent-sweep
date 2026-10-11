@@ -1,6 +1,8 @@
 export type Locale = "en" | "zh";
 
 export interface Strings {
+  compareUsage: string;
+  agentsCombined: (count: number) => string;
   brandSubtitle: string;
   settings: string;
   settingsTitle: string;
@@ -13,13 +15,12 @@ export interface Strings {
   totalSize: (count: number) => string;
   activeLabel: (size: string) => string;
   archivedLabel: (size: string) => string;
-  allProvidersTotal: string;
+  providerTotal: (name: string) => string;
   otherUsage: string;
   otherUsageLabel: string;
   searchPlaceholder: string;
   searchLabel: string;
   providerFilterLabel: string;
-  allProviders: string;
   statusFilterLabel: string;
   chipAll: (count: number) => string;
   chipActive: (count: number) => string;
@@ -66,6 +67,8 @@ export interface Strings {
 }
 
 const en: Strings = {
+  compareUsage: "Agent usage",
+  agentsCombined: (count) => `Across ${count} agents`,
   brandSubtitle: "Inspect and clean local coding-agent sessions",
   settings: "Settings",
   settingsTitle: "Settings",
@@ -78,13 +81,12 @@ const en: Strings = {
   totalSize: (count) => `Total session size (${count})`,
   activeLabel: (size) => `Active · ${size}`,
   archivedLabel: (size) => `Archived · ${size}`,
-  allProvidersTotal: "All providers total",
+  providerTotal: (name) => `${name} total`,
   otherUsage: "Other usage",
   otherUsageLabel: "Other disk usage (read-only)",
-  searchPlaceholder: "Search title, directory, session id, or provider (⌘K)",
+  searchPlaceholder: "Search title, directory, or session ID (⌘K)",
   searchLabel: "Search sessions",
-  providerFilterLabel: "Provider filter",
-  allProviders: "All providers",
+  providerFilterLabel: "Select agent",
   statusFilterLabel: "Status filter",
   chipAll: (count) => `All ${count}`,
   chipActive: (count) => `Active ${count}`,
@@ -134,6 +136,8 @@ const en: Strings = {
 };
 
 const zh: Strings = {
+  compareUsage: "Agent 用量对比",
+  agentsCombined: (count) => `${count} 个 Agent 合计`,
   brandSubtitle: "统计与清理本机 Coding Agent 会话",
   settings: "设置",
   settingsTitle: "设置",
@@ -146,13 +150,12 @@ const zh: Strings = {
   totalSize: (count) => `会话总大小（${count} 个）`,
   activeLabel: (size) => `活跃 · ${size}`,
   archivedLabel: (size) => `已归档 · ${size}`,
-  allProvidersTotal: "全部 Provider 总占用",
+  providerTotal: (name) => `${name} 总占用`,
   otherUsage: "其他占用",
   otherUsageLabel: "其他目录占用（只读）",
-  searchPlaceholder: "搜索标题、目录、会话 ID 或 Provider（⌘K）",
+  searchPlaceholder: "搜索标题、目录或会话 ID（⌘K）",
   searchLabel: "搜索会话",
-  providerFilterLabel: "Provider 筛选",
-  allProviders: "全部 Provider",
+  providerFilterLabel: "选择 Agent",
   statusFilterLabel: "状态筛选",
   chipAll: (count) => `全部 ${count}`,
   chipActive: (count) => `活跃 ${count}`,

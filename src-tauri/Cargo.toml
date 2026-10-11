@@ -24,6 +24,7 @@ chrono = "0.4"
 dirs = "6"
 walkdir = "2"
 trash = "3"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,4 +1,8 @@
+mod claude;
 mod codex;
+mod kimi;
+mod opencode;
+mod zcode;
 
 use std::collections::HashMap;
 
@@ -27,7 +31,13 @@ impl ProviderRegistry {
     }
 
     pub fn built_in() -> Self {
-        Self::new(vec![Box::new(codex::CodexProvider::new())])
+        Self::new(vec![
+            Box::new(codex::CodexProvider::new()),
+            Box::new(claude::ClaudeProvider::new()),
+            Box::new(opencode::OpenCodeProvider::new()),
+            Box::new(kimi::KimiProvider::new()),
+            Box::new(zcode::ZCodeProvider::new()),
+        ])
     }
 
     pub fn scan(&self) -> ScanResult {
@@ -557,10 +567,10 @@ mod tests {
     }
 
     #[test]
-    fn built_in_registers_only_codex() {
+    fn built_in_registers_all_providers() {
         let registry = ProviderRegistry::built_in();
-        assert_eq!(registry.providers.len(), 1);
-        assert_eq!(registry.providers[0].id(), "codex");
+        let ids: Vec<_> = registry.providers.iter().map(|p| p.id()).collect();
+        assert_eq!(ids, ["codex", "claude", "opencode", "kimi", "zcode"]);
     }
 
     #[test]
