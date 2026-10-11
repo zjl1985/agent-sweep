@@ -163,3 +163,11 @@ pub struct DeleteResult {
     pub freed_bytes: u64,
     pub failed: Vec<OperationFailure>,
 }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageCleanupResult {
+    pub removed_event_groups: u32,
+    pub freed_bytes: u64,
+    pub warning: Option<String>,
+}

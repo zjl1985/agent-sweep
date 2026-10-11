@@ -43,7 +43,9 @@ Codex covers the session storage shared by the ChatGPT app, Codex desktop app, a
 - Codex deletion only accepts regular `rollout-*.jsonl` files inside `sessions/` or `archived_sessions/`; index and history files are never modified
 - Empty Codex date directories are pruned after cleanup, but storage roots are retained
 - Claude Code deletes UUID `*.jsonl` sessions under `projects/` plus optional sibling dirs; never touches `history.jsonl` or credentials
-- OpenCode archives by setting `time_archived`; deletes CASCADE from `opencode.db` and never touches auth files
+- OpenCode deletes selected sessions and their durable event streams transactionally, then checkpoints and compacts SQLite; reported reclaimed space is measured from database/WAL files
+- OpenCode “Reclaim database space” removes known event streams for already-deleted sessions and compacts storage, preserving current sessions; close OpenCode first
+- OpenCode session sizes count UTF-8 message, part, and event payload bytes; database overhead and deleted-session event residue are shown separately
 - Kimi Code archives via `state.json`; deletes whole session directories under `sessions/` after symlink checks
 - ZCode soft-deletes the tasks index and only removes validated artifacts under `~/.zcode/cli/` (never the Electron Application Support profile)
 
@@ -94,6 +96,7 @@ Implement the Rust `SessionProvider` contract, declare capabilities, and registe
 - Claude Code has no first-class archive concept, so archive is disabled
 - Claude project folder names encode paths lossily (`-` → `/`); workspace labels are heuristic
 - OpenCode SQLite rows cannot be moved to the OS trash; only explicitly confirmed permanent deletion is supported
+- OpenCode compaction needs free temporary disk space and may be blocked by active connections; incomplete reclamation is reported and can be retried
 - ZCode never scans `~/Library/Application Support/ZCode` (Chromium profile)
 - Provider roots are detected from conventional locations and are not yet configurable
 

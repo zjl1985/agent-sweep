@@ -1,6 +1,12 @@
 export type Locale = "en" | "zh";
 
 export interface Strings {
+  reclaimStorage: string;
+  reclaimDescription: string;
+  closeOpenCode: string;
+  openCodeDeleteNote: string;
+  sessionDataNote: string;
+  reclaimedNotice: (count: number, size: string) => string;
   compareUsage: string;
   agentsCombined: (count: number) => string;
   brandSubtitle: string;
@@ -67,6 +73,12 @@ export interface Strings {
 }
 
 const en: Strings = {
+  reclaimStorage: "Reclaim database space",
+  reclaimDescription: "Permanently remove event history for sessions that have already been deleted, then compact the database. Existing sessions and their events are preserved. This cannot be undone.",
+  closeOpenCode: "Close OpenCode before continuing. Compaction may take a while and needs additional free disk space.",
+  openCodeDeleteNote: "Includes the selected sessions’ messages and event history. The database will be compacted after deletion; actual disk space reclaimed may differ from the data size shown. Close OpenCode first.",
+  sessionDataNote: "Includes messages and event history; data size is not the amount of disk space reclaimable.",
+  reclaimedNotice: (count, size) => `Removed ${count} deleted-session event groups; reclaimed ${size} on disk`,
   compareUsage: "Agent usage",
   agentsCombined: (count) => `Across ${count} agents`,
   brandSubtitle: "Inspect and clean local coding-agent sessions",
@@ -136,6 +148,12 @@ const en: Strings = {
 };
 
 const zh: Strings = {
+  reclaimStorage: "回收数据库空间",
+  reclaimDescription: "永久清除已删除会话遗留的事件记录，然后压缩数据库。现有会话及其事件记录会保留。此操作不可撤销。",
+  closeOpenCode: "请先关闭 OpenCode。压缩可能需要一些时间和额外的可用磁盘空间。",
+  openCodeDeleteNote: "将删除所选会话的消息和事件记录，并压缩数据库。实际释放空间可能与显示的数据大小不同。请先关闭 OpenCode。",
+  sessionDataNote: "包含消息和事件记录；数据大小不等于可释放的磁盘空间。",
+  reclaimedNotice: (count, size) => `已清理 ${count} 个已删除会话的残留事件，实际回收磁盘空间 ${size}`,
   compareUsage: "Agent 用量对比",
   agentsCombined: (count) => `${count} 个 Agent 合计`,
   brandSubtitle: "统计与清理本机 Coding Agent 会话",
@@ -276,6 +294,13 @@ export function localizeMessage(message: string, locale: Locale): string {
 }
 
 const zhDirNames: Record<string, string> = {
+  "Database overhead": "数据库索引、空闲页及其他数据",
+  "Deleted-session events": "已删除会话的残留事件",
+  Database: "数据库",
+  Snapshots: "快照",
+  "Tool output": "工具输出",
+  Logs: "日志",
+  Storage: "其他存储",
   "Log database": "日志数据库",
   Plugins: "插件",
   "Generated images": "生成图片",

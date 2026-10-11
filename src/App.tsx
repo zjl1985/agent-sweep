@@ -27,6 +27,7 @@ import {
   SunIcon,
   TrashIcon,
 } from "./components/Icons";
+import { StorageReclaim } from "./components/StorageReclaim";
 import { UsageComparison } from "./components/UsageComparison";
 import "./App.css";
 
@@ -532,6 +533,10 @@ export default function App() {
           </button>
         </div>
       )}
+      {notice && <div class="banner banner-success" role="status">
+        {notice}
+        <button class="banner-close" aria-label={t.done} onClick={() => setNotice(null)}>✕</button>
+      </div>}
       {provider && provider.issues.length > 0 && (
         <div class="banner banner-warning">
           {provider.issues
@@ -543,7 +548,7 @@ export default function App() {
       {scan && scan.providers.length > 1 && <UsageComparison scan={scan} current={providerFilter} locale={locale} disabled={deleting || archiving || scanning} onSelect={switchProvider} formatSize={formatSize} />}
 
       <section class="stats-row" aria-label={t.statsLabel}>
-        <div class="stat stat-primary">
+        <div class="stat stat-primary" title={providerFilter === "opencode" ? t.sessionDataNote : undefined}>
           <span class="stat-value">{formatSize(sumBytes(providerSessions))}</span>
           <span class="stat-label">
             {t.totalSize(providerSessions.length)}
@@ -567,19 +572,27 @@ export default function App() {
         </div>
       </section>
 
-      {usage.length > 0 && (
+      {(usage.length > 0 || providerFilter === "opencode") && (
         <section class="usage-section" aria-label={t.otherUsageLabel}>
-          <button
-            class="usage-toggle"
-            aria-expanded={usageOpen}
-            aria-controls="usage-details"
-            onClick={() => setUsageOpen((open) => !open)}
-          >
-            <DatabaseIcon size={14} />
-            <span>{t.otherUsage}</span>
-            <span>{formatSize(usage.reduce((sum, dir) => sum + dir.sizeBytes, 0))}</span>
-            <span class="usage-chevron" aria-hidden="true">{usageOpen ? "⌃" : "⌄"}</span>
-          </button>
+          <div class="usage-heading">
+            <button
+              class="usage-toggle"
+              aria-expanded={usageOpen}
+              aria-controls="usage-details"
+              onClick={() => setUsageOpen((open) => !open)}
+            >
+              <DatabaseIcon size={14} />
+              <span>{t.otherUsage}</span>
+              <span>{formatSize(usage.reduce((sum, dir) => sum + dir.sizeBytes, 0))}</span>
+              <span class="usage-chevron" aria-hidden="true">{usageOpen ? "⌃" : "⌄"}</span>
+            </button>
+            {providerFilter === "opencode" && <StorageReclaim locale={locale} disabled={scanning || deleting || archiving}
+              onComplete={async (result) => {
+                await doScan();
+                setNotice(t.reclaimedNotice(result.removedEventGroups, formatSize(result.freedBytes)));
+                if (result.warning) setError(result.warning);
+              }} />}
+            </div>
           {usageOpen && (
             <div class="overview-chips usage-details" id="usage-details">
               {usage.map((dir) => (
@@ -719,9 +732,6 @@ export default function App() {
         </div>
       </footer>
 
-      <div class="sr-only" role="status" aria-live="polite">
-        {notice}
-      </div>
 
       <dialog
         ref={confirmRef}
@@ -732,6 +742,7 @@ export default function App() {
         <p>
           {t.confirmBody(selected.size, formatSize(selectedBytes))}
         </p>
+        {providerFilter === "opencode" && <p>{t.openCodeDeleteNote}</p>}
         <fieldset class="mode-fieldset">
           <legend>{t.mode}</legend>
           <label>

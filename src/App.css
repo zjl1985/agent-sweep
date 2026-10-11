@@ -944,3 +944,9 @@ button:disabled {
   .stat { padding-top: 8px; padding-bottom: 8px; }
   .selection-bar { height: 42px; }
 }
+
+.usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.reclaim-button { padding: 3px 8px; font-size: 12px; }
+.reclaim-dialog { width: 460px; }
+.reclaim-dialog .reclaim-error { color: var(--danger); }
+.banner-success { background: var(--success-soft); color: var(--success); flex-shrink: 0; }

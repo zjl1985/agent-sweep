@@ -5,6 +5,8 @@ use walkdir::WalkDir;
 
 use crate::models::{DirUsage, ProviderCapabilities, ProviderScan, SessionEntry};
 
+use super::storage::{has_events, ORPHAN_GROUPS};
+
 use super::{OPENCODE_PROVIDER_ID, OPENCODE_PROVIDER_NAME};
 
 pub(super) fn scan_opencode_at(root: &Path) -> ProviderScan {
@@ -23,7 +25,9 @@ pub(super) fn scan_opencode_at(root: &Path) -> ProviderScan {
     let sessions = match load_sessions(&db_path) {
         Ok(sessions) => sessions,
         Err(error) => {
-            result.issues.push(format!("Failed to read OpenCode database: {error}"));
+            result
+                .issues
+                .push(format!("Failed to read OpenCode database: {error}"));
             result.total_bytes = dir_size(root);
             result.other_dirs = scan_overview(root);
             return result;
@@ -42,6 +46,34 @@ pub(super) fn scan_opencode_at(root: &Path) -> ProviderScan {
     result.sessions_bytes = result.active_bytes + result.archived_bytes;
     result.total_bytes = dir_size(root);
     result.other_dirs = scan_overview(root);
+    if let Ok(conn) = open_readonly(&db_path) {
+        let orphan_bytes = (|| -> Result<u64, rusqlite::Error> {
+            if !has_events(&conn)? {
+                return Ok(0);
+            }
+            conn.query_row(&format!("SELECT COALESCE(SUM(LENGTH(CAST(data AS BLOB))),0) FROM event WHERE aggregate_id IN ({ORPHAN_GROUPS})"), [], |row| row.get(0))
+        })();
+        match orphan_bytes {
+            Ok(orphan_bytes) => {
+                if let Some(database) = result.other_dirs.first_mut() {
+                    database.name = "Database overhead".to_string();
+                    database.size_bytes = database
+                        .size_bytes
+                        .saturating_sub(result.sessions_bytes)
+                        .saturating_sub(orphan_bytes);
+                    database.note = "Indexes, free pages, metadata and other database records; excludes listed session payloads".to_string();
+                }
+                result.other_dirs.push(DirUsage {
+                    provider_id: OPENCODE_PROVIDER_ID.to_string(), provider_name: OPENCODE_PROVIDER_NAME.to_string(),
+                    name: "Deleted-session events".to_string(), size_bytes: orphan_bytes,
+                    note: "Event payloads for sessions no longer in the session table; reclaim after closing OpenCode".to_string(),
+                });
+            }
+            Err(error) => result
+                .issues
+                .push(format!("Failed to read OpenCode event usage: {error}")),
+        }
+    }
     let mut sessions = sessions;
     sessions.sort_by(|a, b| {
         b.size_bytes
@@ -54,6 +86,9 @@ pub(super) fn scan_opencode_at(root: &Path) -> ProviderScan {
 
 fn load_sessions(db_path: &Path) -> Result<Vec<SessionEntry>, String> {
     let conn = open_readonly(db_path)?;
+    conn.execute_batch("BEGIN")
+        .map_err(|error| error.to_string())?;
+    let events = has_events(&conn).map_err(|error| error.to_string())?;
     let mut stmt = conn
         .prepare(
             "SELECT id, title, directory, time_created, time_updated, time_archived
@@ -78,7 +113,8 @@ fn load_sessions(db_path: &Path) -> Result<Vec<SessionEntry>, String> {
         let (id, title, directory, created, updated, archived_at) =
             row.map_err(|error| error.to_string())?;
         let archived = archived_at.is_some();
-        let size_bytes = session_size_bytes(&conn, &id).unwrap_or(0);
+        let size_bytes =
+            session_size_bytes(&conn, &id, events).map_err(|error| error.to_string())?;
         let title = if title.trim().is_empty() {
             fallback_title(Some(&directory), Some(created))
         } else {
@@ -106,18 +142,27 @@ fn load_sessions(db_path: &Path) -> Result<Vec<SessionEntry>, String> {
     Ok(sessions)
 }
 
-fn session_size_bytes(conn: &rusqlite::Connection, session_id: &str) -> Result<u64, rusqlite::Error> {
+fn session_size_bytes(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    events: bool,
+) -> Result<u64, rusqlite::Error> {
     let message_bytes: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM message WHERE session_id = ?1",
+        "SELECT COALESCE(SUM(LENGTH(CAST(data AS BLOB))), 0) FROM message WHERE session_id = ?1",
         [session_id],
         |row| row.get(0),
     )?;
     let part_bytes: i64 = conn.query_row(
-        "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM part WHERE session_id = ?1",
+        "SELECT COALESCE(SUM(LENGTH(CAST(data AS BLOB))), 0) FROM part WHERE session_id = ?1",
         [session_id],
         |row| row.get(0),
     )?;
-    Ok((message_bytes + part_bytes) as u64)
+    let event_bytes: i64 = if events {
+        conn.query_row("SELECT COALESCE(SUM(LENGTH(CAST(data AS BLOB))), 0) FROM event WHERE aggregate_id = ?1", [session_id], |row| row.get(0))?
+    } else {
+        0
+    };
+    Ok((message_bytes + part_bytes + event_bytes) as u64)
 }
 
 pub(super) fn open_readonly(db_path: &Path) -> Result<rusqlite::Connection, String> {
@@ -149,7 +194,6 @@ fn fallback_title(workspace: Option<&str>, created_at_ms: Option<i64>) -> String
 
 fn scan_overview(root: &Path) -> Vec<DirUsage> {
     let mut dirs = Vec::new();
-    let db = root.join("opencode.db");
     let db_bytes = ["opencode.db", "opencode.db-wal", "opencode.db-shm"]
         .iter()
         .map(|name| file_size(&root.join(name)))
@@ -161,7 +205,6 @@ fn scan_overview(root: &Path) -> Vec<DirUsage> {
         size_bytes: db_bytes,
         note: "opencode.db".to_string(),
     });
-    let _ = db;
     for (directory, label) in [
         ("snapshot", "Snapshots"),
         ("tool-output", "Tool output"),
@@ -251,26 +294,18 @@ pub(crate) mod tests {
         conn.execute(
             "INSERT INTO session (id, directory, title, time_created, time_updated, time_archived)
              VALUES (?1, ?2, ?3, 1000, 2000, NULL)",
-            rusqlite::params![
-                "ses_active",
-                "/Users/zero/code/demo",
-                "Active session",
-            ],
+            rusqlite::params!["ses_active", "/Users/zero/code/demo", "Active session",],
         )
         .unwrap();
         conn.execute(
             "INSERT INTO session (id, directory, title, time_created, time_updated, time_archived)
              VALUES (?1, ?2, ?3, 1000, 1500, 1800)",
-            rusqlite::params![
-                "ses_archived",
-                "/Users/zero/code/demo",
-                "Old session",
-            ],
+            rusqlite::params!["ses_archived", "/Users/zero/code/demo", "Old session",],
         )
         .unwrap();
         conn.execute(
             "INSERT INTO message (id, session_id, time_created, time_updated, data)
-             VALUES ('msg1', 'ses_active', 1, 1, 'hello')",
+             VALUES ('msg1', 'ses_active', 1, 1, '你好')",
             [],
         )
         .unwrap();
@@ -293,7 +328,7 @@ pub(crate) mod tests {
             .find(|s| s.session_id == "ses_active")
             .unwrap();
         assert_eq!(active.title, "Active session");
-        assert_eq!(active.size_bytes, 10); // hello + world
+        assert_eq!(active.size_bytes, 11); // UTF-8 你好 (6 bytes) + world (5 bytes)
         assert!(active.capabilities.archive);
         let archived = result
             .sessions

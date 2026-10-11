@@ -5,6 +5,7 @@ import type {
   DeleteRequest,
   DeleteResult,
   ScanResult,
+  StorageCleanupResult,
 } from "./types";
 
 function assertDesktopRuntime() {
@@ -28,4 +29,9 @@ export async function deleteSessions(request: DeleteRequest): Promise<DeleteResu
 export async function archiveSessions(request: ArchiveRequest): Promise<ArchiveResult> {
   assertDesktopRuntime();
   return invoke<ArchiveResult>("archive_sessions", { request });
+}
+
+export async function reclaimOpenCodeStorage(): Promise<StorageCleanupResult> {
+  assertDesktopRuntime();
+  return invoke<StorageCleanupResult>("reclaim_opencode_storage");
 }

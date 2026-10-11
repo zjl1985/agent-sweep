@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenCode deletion now removes matching durable event streams in the same transaction and compacts the database; reclaimed bytes reflect measured disk changes.
+- Added explicit recovery of space occupied by event streams from previously deleted OpenCode sessions.
+- Count UTF-8 bytes and event payloads in OpenCode session sizes; exclude them from database overhead to avoid double-counting.
+- Show operation results visibly and report database contention or partial cleanup.
+
 ### Added
 
 - Horizontal agent storage comparison with clickable segments.

@@ -606,3 +606,7 @@ mod tests {
         assert!(deleted.failed.is_empty());
     }
 }
+
+pub(crate) fn reclaim_opencode() -> Result<crate::models::StorageCleanupResult, String> {
+    opencode::OpenCodeProvider::new().reclaim()
+}

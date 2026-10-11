@@ -1,5 +1,6 @@
 mod cleanup;
 mod discovery;
+mod storage;
 
 use std::path::{Path, PathBuf};
 
@@ -27,6 +28,10 @@ impl OpenCodeProvider {
         Self {
             root: Some(root.into()),
         }
+    }
+
+    pub(crate) fn reclaim(&self) -> Result<crate::models::StorageCleanupResult, String> {
+        cleanup::reclaim_at(self.root()?)
     }
 
     fn root(&self) -> Result<&Path, String> {

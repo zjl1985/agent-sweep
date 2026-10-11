@@ -25,13 +25,21 @@ async fn archive_sessions(request: ArchiveRequest) -> Result<ArchiveResult, Stri
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+async fn reclaim_opencode_storage() -> Result<models::StorageCleanupResult, String> {
+    tauri::async_runtime::spawn_blocking(providers::reclaim_opencode)
+        .await
+        .map_err(|error| error.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
             delete_sessions,
-            archive_sessions
+            archive_sessions,
+            reclaim_opencode_storage
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

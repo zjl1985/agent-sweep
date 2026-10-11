@@ -82,3 +82,9 @@ export interface ArchiveResult {
   archivedCount: number;
   failed: OperationFailure[];
 }
+
+export interface StorageCleanupResult {
+  removedEventGroups: number;
+  freedBytes: number;
+  warning: string | null;
+}
