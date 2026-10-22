@@ -109,7 +109,7 @@ export default function App() {
   const [ageFilter, setAgeFilter] = useState<AgeFilter>(0);
   const [sortBy, setSortBy] = useState<SortKey>("size");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState<DeleteMode>("trash");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -173,7 +173,7 @@ export default function App() {
             ?? result.providers[0]?.id ?? "codex",
       );
       setSelected(new Set());
-      setActiveIndex(0);
+      setActiveIndex(-1);
       setNotice(null);
     } catch (cause) {
       setError(String(cause));
@@ -196,7 +196,7 @@ export default function App() {
     setStatusFilter("all");
     setQuery("");
     setAgeFilter(0);
-    setActiveIndex(0);
+    setActiveIndex(-1);
     setUsageOpen(false);
     setNotice(null);
   };
@@ -409,10 +409,14 @@ export default function App() {
       if (sortedSessions.length === 0) return;
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setActiveIndex((index) => Math.min(index + 1, sortedSessions.length - 1));
+        setActiveIndex((index) =>
+          index < 0 ? 0 : Math.min(index + 1, sortedSessions.length - 1),
+        );
       } else if (event.key === "ArrowUp") {
         event.preventDefault();
-        setActiveIndex((index) => Math.max(index - 1, 0));
+        setActiveIndex((index) =>
+          index <= 0 ? 0 : index - 1,
+        );
       } else if (event.key === "Home") {
         event.preventDefault();
         setActiveIndex(0);
@@ -420,10 +424,12 @@ export default function App() {
         event.preventDefault();
         setActiveIndex(sortedSessions.length - 1);
       } else if (event.key === " " || event.key === "Enter") {
-        const session = sortedSessions[activeIndex];
-        if (session) {
-          event.preventDefault();
-          toggleSelected(selectionKey(session));
+        if (activeIndex >= 0) {
+          const session = sortedSessions[activeIndex];
+          if (session) {
+            event.preventDefault();
+            toggleSelected(selectionKey(session));
+          }
         }
       }
     };
@@ -439,6 +445,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (activeIndex < 0) return;
     const row = listRef.current?.querySelector<HTMLElement>(
       `[data-index="${activeIndex}"]`,
     );
@@ -461,22 +468,7 @@ export default function App() {
     <div class="app-shell">
       <header class="app-header">
         <div class="brand">
-          <div class="brand-heading">
-            <h1 class="brand-title">AgentSweep</h1>
-            {scan && scan.providers.length > 0 && (
-              <select
-                class="select provider-select"
-                value={providerFilter}
-                onChange={(event) => switchProvider(event.currentTarget.value)}
-                aria-label={t.providerFilterLabel}
-                disabled={deleting || archiving || scanning}
-              >
-                {scan.providers.map((entry) => (
-                  <option key={entry.id} value={entry.id}>{entry.name}</option>
-                ))}
-              </select>
-            )}
-          </div>
+          <h1 class="brand-title">AgentSweep</h1>
           <p class="brand-sub">{t.brandSubtitle}</p>
         </div>
         <div class="header-actions">
@@ -698,7 +690,10 @@ export default function App() {
             checked={selected.has(selectionKey(session))}
             maxBytes={maxBytes}
             locale={locale}
-            onToggle={() => toggleSelected(selectionKey(session))}
+            onToggle={() => {
+              setActiveIndex(index);
+              toggleSelected(selectionKey(session));
+            }}
           />
         ))}
       </div>

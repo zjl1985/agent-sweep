@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{BufReader, Read};
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
@@ -89,7 +89,9 @@ fn collect_rollout_files(
             Some(name) => name,
             None => continue,
         };
-        if !(name.starts_with("rollout-") && name.ends_with(".jsonl")) {
+        let is_rollout = name.starts_with("rollout-")
+            && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"));
+        if !is_rollout {
             continue;
         }
         let metadata = match entry.metadata() {
@@ -148,6 +150,9 @@ struct SessionMeta {
 /// Reads the first few lines of a rollout file to extract session_meta
 /// (session_id / cwd / UTC timestamp), bounded by the byte budget.
 fn read_session_meta(path: &Path) -> Option<SessionMeta> {
+    if path.extension().and_then(|ext| ext.to_str()) == Some("zst") {
+        return None;
+    }
     let file = File::open(path).ok()?;
     let mut reader = BufReader::new(file);
     for _ in 0..MAX_METADATA_LINES {
@@ -193,26 +198,52 @@ fn read_session_meta(path: &Path) -> Option<SessionMeta> {
 
 /// Reads one line; gives up (returns None) past `cap` bytes so a single
 /// giant line cannot stall the scan.
-fn next_bounded_line(reader: &mut impl Read, cap: usize) -> Option<String> {
+fn next_bounded_line(reader: &mut impl BufRead, cap: usize) -> Option<String> {
     let mut buf: Vec<u8> = Vec::with_capacity(8 * 1024);
-    let mut chunk = [0u8; 8 * 1024];
     loop {
-        let read = reader.read(&mut chunk).ok()?;
-        if read == 0 {
+        let available = match reader.fill_buf() {
+            Ok(available) => available,
+            Err(_) => return None,
+        };
+        if available.is_empty() {
             return if buf.is_empty() {
                 None
             } else {
                 String::from_utf8(buf).ok()
             };
         }
-        if let Some(pos) = chunk[..read].iter().position(|&byte| byte == b'\n') {
-            buf.extend_from_slice(&chunk[..pos]);
+        if let Some(pos) = available.iter().position(|&byte| byte == b'\n') {
+            buf.extend_from_slice(&available[..pos]);
+            reader.consume(pos + 1);
+            if buf.len() > cap {
+                return None;
+            }
             return String::from_utf8(buf).ok();
         }
-        buf.extend_from_slice(&chunk[..read]);
-        if buf.len() > cap {
+        if buf.len() + available.len() > cap {
+            // Drain the oversized line so the next call starts cleanly.
+            let take = available.len();
+            reader.consume(take);
+            loop {
+                let available = match reader.fill_buf() {
+                    Ok(available) => available,
+                    Err(_) => break,
+                };
+                if available.is_empty() {
+                    break;
+                }
+                if let Some(pos) = available.iter().position(|&byte| byte == b'\n') {
+                    reader.consume(pos + 1);
+                    break;
+                }
+                let take = available.len();
+                reader.consume(take);
+            }
             return None;
         }
+        buf.extend_from_slice(available);
+        let take = available.len();
+        reader.consume(take);
     }
 }
 
@@ -220,7 +251,10 @@ fn next_bounded_line(reader: &mut impl Read, cap: usize) -> Option<String> {
 /// The timestamp part is a fixed 19 chars + one dash, and a dashed UUID v7
 /// is 36 chars, for a total of 56.
 pub fn session_id_from_file_name(name: &str) -> Option<String> {
-    let stem = name.strip_prefix("rollout-")?.strip_suffix(".jsonl")?;
+    let stem = name
+        .strip_prefix("rollout-")?
+        .strip_suffix(".jsonl.zst")
+        .or_else(|| name.strip_prefix("rollout-")?.strip_suffix(".jsonl"))?;
     if stem.len() == 56 {
         Some(stem[20..].to_string())
     } else {
@@ -232,7 +266,10 @@ pub fn session_id_from_file_name(name: &str) -> Option<String> {
 /// fallback when the first-line metadata is missing.
 fn created_ms_from_file_name(name: &str) -> Option<i64> {
     use chrono::TimeZone;
-    let stem = name.strip_prefix("rollout-")?.strip_suffix(".jsonl")?;
+    let stem = name
+        .strip_prefix("rollout-")?
+        .strip_suffix(".jsonl.zst")
+        .or_else(|| name.strip_prefix("rollout-")?.strip_suffix(".jsonl"))?;
     if stem.len() < 19 {
         return None;
     }
@@ -313,6 +350,23 @@ fn scan_overview(codex_root: &Path) -> Vec<DirUsage> {
         size_bytes: logs_bytes,
         note: "logs_2.sqlite".to_string(),
     });
+    let history_bytes = [
+        "thread_history_1.sqlite",
+        "thread_history_1.sqlite-wal",
+        "thread_history_1.sqlite-shm",
+    ]
+    .iter()
+    .map(|file| file_size(&codex_root.join(file)))
+    .sum();
+    if history_bytes > 0 {
+        dirs.push(DirUsage {
+            provider_id: CODEX_PROVIDER_ID.to_string(),
+            provider_name: CODEX_PROVIDER_NAME.to_string(),
+            name: "Thread history database".to_string(),
+            size_bytes: history_bytes,
+            note: "thread_history_1.sqlite".to_string(),
+        });
+    }
     let read_only = [
         ("plugins", "Plugins"),
         ("generated_images", "Generated images"),
@@ -372,6 +426,11 @@ mod tests {
             session_id_from_file_name(name).as_deref(),
             Some("01a00357-efb0-7db0-8d4f-272a55f4431c")
         );
+        let name_zst = "rollout-2026-08-15T10-54-49-01a00357-efb0-7db0-8d4f-272a55f4431c.jsonl.zst";
+        assert_eq!(
+            session_id_from_file_name(name_zst).as_deref(),
+            Some("01a00357-efb0-7db0-8d4f-272a55f4431c")
+        );
         assert_eq!(session_id_from_file_name("notes.txt"), None);
     }
 
@@ -381,6 +440,9 @@ mod tests {
         let ms = created_ms_from_file_name(name).unwrap();
         let formatted = format_short_date(ms);
         assert_eq!(formatted, "2026-08-15");
+        let name_zst = "rollout-2026-08-15T10-54-49-01a00357-efb0-7db0-8d4f-272a55f4431c.jsonl.zst";
+        let ms_zst = created_ms_from_file_name(name_zst).unwrap();
+        assert_eq!(format_short_date(ms_zst), "2026-08-15");
     }
 
     #[test]
@@ -435,34 +497,33 @@ mod tests {
         let name_a = "rollout-2026-08-15T10-54-49-01a00357-efb0-7db0-8d4f-272a55f4431c.jsonl";
         let name_b = "rollout-2026-08-16T08-24-21-01a007f4-86f8-7903-b3f3-201554f50580.jsonl";
         let name_c = "rollout-2026-07-01T09-00-00-01a00000-0000-0000-0000-000000000000.jsonl";
+        let name_d = "rollout-2026-05-18T14-56-21-019e39df-13b8-78e3-a6cf-2be8ce91d4c4.jsonl.zst";
         let meta_b = r#"{"timestamp":"2026-08-16T00:24:21.001Z","type":"session_meta","payload":{"session_id":"01a007f4-86f8-7903-b3f3-201554f50580","cwd":"/Users/zero/code/baton"}}"#;
         write_file(
             &root.join("sessions/2026/08/15").join(name_a),
-            "{\"type\":\"event_msg\"}
-",
+            "{\"type\":\"event_msg\"}\n",
         );
         write_file(
             &root.join("sessions/2026/08/16").join(name_b),
-            &format!(
-                "{meta_b}
-"
-            ),
+            &format!("{meta_b}\n"),
         );
         write_file(
             &root.join("archived_sessions").join(name_c),
-            "junk
-",
+            "junk\n",
+        );
+        write_file(
+            &root.join("sessions/2026/05/18").join(name_d),
+            "compressed\n",
         );
         write_file(
             &root.join("session_index.jsonl"),
-            "{\"id\":\"01a007f4-86f8-7903-b3f3-201554f50580\",\"thread_name\":\"Fix login bug\"}
-",
+            "{\"id\":\"01a007f4-86f8-7903-b3f3-201554f50580\",\"thread_name\":\"Fix login bug\"}\n{\"id\":\"019e39df-13b8-78e3-a6cf-2be8ce91d4c4\",\"thread_name\":\"Refactor auth\"}\n",
         );
 
         let result = scan_codex_at(root);
         assert!(result.issues.is_empty());
-        assert_eq!(result.sessions.len(), 3);
-        assert_eq!(result.active_count, 2);
+        assert_eq!(result.sessions.len(), 4);
+        assert_eq!(result.active_count, 3);
         assert_eq!(result.archived_count, 1);
         assert!(result.sessions_bytes > 0);
 
@@ -485,6 +546,14 @@ mod tests {
         // Without an index entry or metadata, fall back to the filename
         // timestamp for the title.
         assert!(c.title.contains("2026-07-01"));
+
+        let d = by_id["019e39df-13b8-78e3-a6cf-2be8ce91d4c4"];
+        assert_eq!(d.title, "Refactor auth");
+        assert!(!d.archived);
+        assert_eq!(
+            d.file_name,
+            "rollout-2026-05-18T14-56-21-019e39df-13b8-78e3-a6cf-2be8ce91d4c4.jsonl.zst"
+        );
     }
 
     #[test]

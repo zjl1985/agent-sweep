@@ -2,11 +2,11 @@ import type { ScanResult } from "../types";
 import { strings, type Locale } from "../i18n";
 
 const COLORS: Record<string, string> = {
-  codex: "#5597eb",
-  claude: "#d99a76",
-  opencode: "#8a7bd3",
-  kimi: "#63ac9c",
-  zcode: "#c6aa5e",
+  codex: "#3c5c50",
+  claude: "#ff8263",
+  opencode: "#9359a6",
+  kimi: "#487e85",
+  zcode: "#c59b4c",
 };
 
 export function UsageComparison({ scan, current, locale, disabled, onSelect, formatSize }: {

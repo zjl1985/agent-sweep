@@ -5,6 +5,73 @@ use crate::models::{ArchiveResult, DeleteMode, DeleteResult, OperationFailure};
 
 use super::CODEX_PROVIDER_ID;
 
+fn get_rollout_companion_paths(
+    codex_root: &Path,
+    path: &Path,
+    session_id: Option<&str>,
+) -> Vec<PathBuf> {
+    let mut files = vec![path.to_path_buf()];
+    let s = path.to_string_lossy();
+    if s.ends_with(".jsonl.zst") {
+        if let Some(base) = s.strip_suffix(".zst") {
+            files.push(PathBuf::from(base));
+        }
+    } else if s.ends_with(".jsonl") {
+        files.push(PathBuf::from(format!("{s}.zst")));
+    }
+    if let Some(id) = session_id {
+        let img_dir = codex_root.join("generated_images").join(id);
+        if img_dir.is_dir() {
+            files.push(img_dir);
+        }
+    }
+    files
+}
+
+fn cleanup_sqlite_records(codex_root: &Path, session_id: &str) {
+    let history_db = codex_root.join("thread_history_1.sqlite");
+    if history_db.is_file() {
+        if let Ok(conn) = rusqlite::Connection::open(&history_db) {
+            let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
+            let _ = conn.execute(
+                "DELETE FROM thread_items WHERE thread_id = ?1",
+                rusqlite::params![session_id],
+            );
+            let _ = conn.execute(
+                "DELETE FROM thread_realtime_items WHERE thread_id = ?1",
+                rusqlite::params![session_id],
+            );
+            let _ = conn.execute(
+                "DELETE FROM thread_turns WHERE thread_id = ?1",
+                rusqlite::params![session_id],
+            );
+            let _ = conn.execute(
+                "DELETE FROM thread_history_projection_state WHERE thread_id = ?1",
+                rusqlite::params![session_id],
+            );
+        }
+    }
+
+    let state_db = codex_root.join("state_5.sqlite");
+    if state_db.is_file() {
+        if let Ok(conn) = rusqlite::Connection::open(&state_db) {
+            let _ = conn.busy_timeout(std::time::Duration::from_millis(500));
+            let _ = conn.execute(
+                "DELETE FROM thread_dynamic_tools WHERE thread_id = ?1",
+                rusqlite::params![session_id],
+            );
+            let _ = conn.execute(
+                "DELETE FROM thread_read_receipts WHERE thread_id = ?1",
+                rusqlite::params![session_id],
+            );
+            let _ = conn.execute(
+                "DELETE FROM threads WHERE id = ?1",
+                rusqlite::params![session_id],
+            );
+        }
+    }
+}
+
 pub(super) fn failure(
     session_key: impl Into<String>,
     message: impl Into<String>,
@@ -48,25 +115,38 @@ pub(super) fn delete_at(
             .map(|rel_path| codex_root.join(rel_path))
             .and_then(|path| validate_session_file(&path, &allowed_roots).map(|_| path));
         match validated {
-            Ok(path) => match super::super::files::remove_group(
-                codex_root,
-                &[path.clone(), path.with_extension("jsonl.zst")],
-                mode,
-            ) {
-                Ok(size) => {
-                    result.deleted_count += 1;
-                    if mode == DeleteMode::Permanent {
-                        result.freed_bytes += size;
+            Ok(path) => {
+                let file_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default();
+                let session_id = super::discovery::session_id_from_file_name(file_name);
+                let companion_paths =
+                    get_rollout_companion_paths(codex_root, &path, session_id.as_deref());
+
+                match super::super::files::remove_group(
+                    codex_root,
+                    &companion_paths,
+                    mode,
+                ) {
+                    Ok(size) => {
+                        result.deleted_count += 1;
+                        if mode == DeleteMode::Permanent {
+                            result.freed_bytes += size;
+                            if let Some(id) = &session_id {
+                                cleanup_sqlite_records(codex_root, id);
+                            }
+                        }
+                        if let Some(parent) = path.parent() {
+                            prune_empty_parents(parent, &sessions_root);
+                        }
                     }
-                    if let Some(parent) = path.parent() {
-                        prune_empty_parents(parent, &sessions_root);
+                    Err((bytes, error)) => {
+                        result.freed_bytes += bytes;
+                        result.failed.push(failure(rel.clone(), error));
                     }
                 }
-                Err((bytes, error)) => {
-                    result.freed_bytes += bytes;
-                    result.failed.push(failure(rel.clone(), error));
-                }
-            },
+            }
             Err(message) => result.failed.push(failure(rel.clone(), message)),
         }
     }
@@ -125,9 +205,21 @@ pub(super) fn archive_at(session_keys: &[String], codex_root: &Path) -> ArchiveR
             ));
             continue;
         }
+
         match fs::rename(&path, &target) {
             Ok(()) => {
                 result.archived_count += 1;
+                let companion_paths = get_rollout_companion_paths(codex_root, &path, None);
+                for comp in companion_paths {
+                    if comp != path && comp.exists() && comp.is_file() {
+                        if let Some(comp_name) = comp.file_name() {
+                            let comp_target = archived_root.join(comp_name);
+                            if !comp_target.exists() {
+                                let _ = fs::rename(&comp, &comp_target);
+                            }
+                        }
+                    }
+                }
                 if let Some(parent) = path.parent() {
                     prune_empty_parents(parent, &sessions_root);
                 }
@@ -168,7 +260,9 @@ fn validate_session_file(path: &Path, allowed_roots: &[PathBuf]) -> Result<u64, 
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("");
-    if !(name.starts_with("rollout-") && name.ends_with(".jsonl")) {
+    let is_rollout = name.starts_with("rollout-")
+        && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"));
+    if !is_rollout {
         return Err("Only rollout-*.jsonl session files can be deleted".to_string());
     }
     let metadata =
@@ -301,6 +395,86 @@ mod tests {
             fs::read_to_string(dir.path().join("session_index.jsonl")).unwrap(),
             "shared"
         );
+    }
+
+    #[test]
+    fn delete_cleans_up_sqlite_history_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let uuid = "01a00000-0000-0000-0000-000000000001";
+        let key = active(&format!("rollout-2026-08-14T09-00-00-{uuid}.jsonl"));
+        let file = root.join(&key);
+        write_rollout(&file, "test rollout");
+
+        let db_path = root.join("thread_history_1.sqlite");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE thread_turns (thread_id TEXT PRIMARY KEY);
+             CREATE TABLE thread_items (thread_id TEXT);
+             CREATE TABLE thread_realtime_items (thread_id TEXT);
+             CREATE TABLE thread_history_projection_state (thread_id TEXT);
+             INSERT INTO thread_turns VALUES ('01a00000-0000-0000-0000-000000000001');
+             INSERT INTO thread_items VALUES ('01a00000-0000-0000-0000-000000000001');
+             INSERT INTO thread_turns VALUES ('other-uuid');",
+        )
+        .unwrap();
+        drop(conn);
+
+        let result = delete_at(&[key], DeleteMode::Permanent, root);
+        assert!(result.failed.is_empty());
+        assert_eq!(result.deleted_count, 1);
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let turns_for_deleted: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM thread_turns WHERE thread_id = ?1",
+                rusqlite::params![uuid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(turns_for_deleted, 0);
+
+        let remaining_turns: i64 = conn
+            .query_row("SELECT count(*) FROM thread_turns", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining_turns, 1);
+    }
+
+    #[test]
+    fn archive_moves_compressed_zst_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let key = active("rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-000000000001.jsonl.zst");
+        let file = root.join(&key);
+        write_rollout(&file, "compressed");
+
+        let result = archive_at(&[key], root);
+        assert!(result.failed.is_empty());
+        assert_eq!(result.archived_count, 1);
+        assert!(!file.exists());
+        assert!(root
+            .join("archived_sessions/rollout-2026-08-14T09-00-00-01a00000-0000-0000-0000-000000000001.jsonl.zst")
+            .exists());
+    }
+
+    #[test]
+    fn delete_removes_generated_images_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let uuid = "01a00000-0000-0000-0000-000000000001";
+        let key = active(&format!("rollout-2026-08-14T09-00-00-{uuid}.jsonl"));
+        let file = root.join(&key);
+        write_rollout(&file, "test rollout");
+
+        let img_dir = root.join("generated_images").join(uuid);
+        fs::create_dir_all(&img_dir).unwrap();
+        fs::write(img_dir.join("sample.png"), "image data bytes").unwrap();
+
+        let result = delete_at(&[key], DeleteMode::Permanent, root);
+        assert!(result.failed.is_empty());
+        assert_eq!(result.deleted_count, 1);
+        assert!(!file.exists());
+        assert!(!img_dir.exists());
     }
 
     #[test]
